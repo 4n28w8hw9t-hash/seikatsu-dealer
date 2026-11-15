@@ -32,6 +32,18 @@ BANNERS = {
     "rob": ("ОГРАБЛЕНИЕ", "РИСК  •  НАГРАДА"),
 }
 
+# персонажи из листа chars.png: команда -> (x1, y1, x2, y2)
+CHAR_BOXES = {
+    "work": (405, 50, 630, 350),
+    "daily": (600, 50, 825, 350),
+    "balance": (10, 40, 235, 340),
+    "coinflip": (205, 40, 430, 340),
+    "slots": (205, 40, 430, 340),
+    "shop": (795, 50, 1020, 350),
+    "top": (410, 590, 690, 963),
+    "rob": (720, 600, 1000, 973),
+}
+
 S = 6  # размер «пикселя»
 
 
@@ -55,12 +67,15 @@ def _font(size: int):
     return ImageFont.load_default(size=size)
 
 
-def make_banner(src: Image.Image, title: str, subtitle: str,
+def make_banner(char: Image.Image, title: str, subtitle: str,
                 W: int = 1200, H: int = 400) -> Image.Image:
     """Баннер: персонаж слева, лучи, крупная пиксельная надпись справа."""
     w, h = W // S, H // S
-    char = src.convert("RGB").crop((0, 0, src.height, src.height)).resize((H, H), Image.LANCZOS)
-    cx, cy = int(0.5 * h), int(0.36 * h)
+    char = char.convert("RGB")
+    CW = round(H * char.width / char.height)
+    char = char.resize((CW, H), Image.LANCZOS)
+    cwl = CW // S
+    cx, cy = cwl // 2, int(0.36 * h)
     lo = Image.new("RGB", (w, h), RED)
     d = ImageDraw.Draw(lo)
     for i in range(36):
@@ -69,11 +84,11 @@ def make_banner(src: Image.Image, title: str, subtitle: str,
     mask = Image.new("L", (w, h), 0)
     md = ImageDraw.Draw(mask)
     for x in range(w):
-        md.line([(x, 0), (x, h)], fill=max(0, min(170, (x - h - 6) * 5)))
+        md.line([(x, 0), (x, h)], fill=max(0, min(170, (x - cwl - 6) * 5)))
     lo = Image.composite(Image.new("RGB", (w, h), DARK_RED), lo, mask)
     d = ImageDraw.Draw(lo)
     d.fontmode = "1"
-    tx = h + 14
+    tx = cwl + 14
     room = w - tx - 8
     size = 26
     f1 = _font(size)
@@ -93,10 +108,10 @@ def make_banner(src: Image.Image, title: str, subtitle: str,
     d.text((tx + 1, ly + 5), subtitle, font=f2, fill=SHADOW)
     d.text((tx, ly + 4), subtitle, font=f2, fill=RAY)
     big = lo.resize((W, H), Image.NEAREST)
-    fade = Image.new("L", (H, H), 255)
+    fade = Image.new("L", (CW, H), 255)
     fd = ImageDraw.Draw(fade)
-    for x in range(H - 30, H):
-        fd.line([(x, 0), (x, H)], fill=int(255 * (H - x) / 30))
+    for x in range(CW - 30, CW):
+        fd.line([(x, 0), (x, H)], fill=int(255 * (CW - x) / 30))
     big.paste(char, (0, 0), fade)
     return big.quantize(colors=64)
 
@@ -204,18 +219,21 @@ def emoji_png(name: str) -> Image.Image:
     return EMOJIS[name]().resize((128, 128), Image.NEAREST)
 
 
-def build_all(src_path: str, out_dir: str) -> dict:
+def build_all(src_path: str, out_dir: str, chars_path: str = "") -> dict:
     """Рисует все баннеры (если их ещё нет) и возвращает {команда: путь}."""
     os.makedirs(out_dir, exist_ok=True)
+    if not os.path.exists(src_path):
+        return {}
+    src = Image.open(src_path)
+    main = src.crop((0, 0, src.height, src.height))
+    sheet = Image.open(chars_path) if chars_path and os.path.exists(chars_path) else None
     paths = {}
-    src = None
     for key, (title, sub) in BANNERS.items():
         p = os.path.join(out_dir, f"banner_{key}.png")
         if not os.path.exists(p):
-            if src is None:
-                if not os.path.exists(src_path):
-                    return {}
-                src = Image.open(src_path)
-            make_banner(src, title, sub).save(p, optimize=True)
+            char = main
+            if sheet is not None and key in CHAR_BOXES:
+                char = sheet.crop(CHAR_BOXES[key])
+            make_banner(char, title, sub).save(p, optimize=True)
         paths[key] = p
     return paths

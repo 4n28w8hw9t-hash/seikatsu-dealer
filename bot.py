@@ -123,7 +123,8 @@ class EconomyBot(commands.Bot):
 
         try:  # баннеры команд (рисуются один раз и лежат в data/)
             self.banners = await asyncio.to_thread(
-                art.build_all, BANNER_PATH, os.path.join(DATA_DIR, "art_v1"))
+                art.build_all, BANNER_PATH, os.path.join(DATA_DIR, "art_v2"),
+                os.path.join(os.path.dirname(BANNER_PATH), "chars.png"))
         except Exception as ex:
             print("Баннеры не созданы:", ex)
             self.banners = {}
@@ -381,14 +382,16 @@ async def rob(inter: discord.Interaction, участник: discord.Member):
         stolen = random.randint(victim["balance"] // 10, victim["balance"] // 3)
         await bot.add(inter.guild_id, участник.id, -stolen)
         await bot.add(inter.guild_id, inter.user.id, stolen)
-        await reply(inter, 
-            f"🦹 {inter.user.mention} украл у {участник.mention} **{fmt(stolen)}**!")
+        await send_card(inter, embed(
+            "🦹 Ограбление", f"{inter.user.mention} украл у {участник.mention} **{fmt(stolen)}**!",
+            discord.Color.green()), "rob")
     else:
         fine = random.randint(50, min(300, me["balance"]))
         await bot.add(inter.guild_id, inter.user.id, -fine)
         await bot.add(inter.guild_id, участник.id, fine)
-        await reply(inter, 
-            f"🚨 {inter.user.mention} попался и выплатил {участник.mention} штраф **{fmt(fine)}**")
+        await send_card(inter, embed(
+            "🚨 Ограбление", f"{inter.user.mention} попался и выплатил {участник.mention} штраф **{fmt(fine)}**",
+            discord.Color.red()), "rob")
 
 
 @bot.tree.command(name="топ", description="Самые богатые участники")
