@@ -56,17 +56,39 @@ def fmt_time(sec: int) -> str:
     return " ".join(parts) or "0 сек"
 
 
+class DeferTree(app_commands.CommandTree):
+    """Сразу подтверждаем команду, чтобы Discord не ждал дольше 3 секунд."""
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.type == discord.InteractionType.application_command \
+                and not interaction.response.is_done():
+            try:
+                await interaction.response.defer(thinking=True)
+            except discord.HTTPException:
+                pass
+        return True
+
+
+async def reply(inter: discord.Interaction, content=None, **kw):
+    if content is not None:
+        kw["content"] = content
+    if inter.response.is_done():
+        return await inter.followup.send(**kw)
+    return await inter.response.send_message(**kw)
+
+
 class EconomyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = False  # для награды за сообщения текст не нужен
         intents.members = False
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=DeferTree)
         self.db: aiosqlite.Connection | None = None
         self.msg_cd: dict[tuple[int, int], float] = {}
 
     async def setup_hook(self):
         self.db = await aiosqlite.connect(DB_PATH)
+        await self.db.execute("PRAGMA journal_mode=WAL")
+        await self.db.execute("PRAGMA synchronous=NORMAL")
         await self.db.executescript("""
         CREATE TABLE IF NOT EXISTS users(
             guild_id INTEGER, user_id INTEGER,
@@ -218,10 +240,10 @@ async def help_cmd(inter: discord.Interaction):
         e.set_thumbnail(url=bot.user.display_avatar.url)
     if os.path.exists(BANNER_PATH):
         e.set_image(url="attachment://banner.png")
-        await inter.response.send_message(
+        await reply(inter, 
             embed=e, file=discord.File(BANNER_PATH, filename="banner.png"))
     else:
-        await inter.response.send_message(embed=e)
+        await reply(inter, embed=e)
 
 
 # ═════════ Основные команды ═════════
@@ -235,7 +257,7 @@ async def balance(inter: discord.Interaction, участник: discord.Member |
     e.add_field(name="Банк", value=fmt(u["bank"]))
     e.add_field(name="Всего", value=fmt(u["balance"] + u["bank"]))
     e.set_thumbnail(url=m.display_avatar.url)
-    await inter.response.send_message(embed=e)
+    await reply(inter, embed=e)
 
 
 @bot.tree.command(name="ежедневно", description="Забрать ежедневную награду")
@@ -244,13 +266,13 @@ async def daily(inter: discord.Interaction):
     now = int(time.time())
     passed = now - u["last_daily"]
     if passed < 86400:
-        return await inter.response.send_message(
+        return await reply(inter, 
             f"⏳ Следующая награда через **{fmt_time(86400 - passed)}**", ephemeral=True)
     streak = u["streak"] + 1 if passed < 2 * 86400 else 1
     reward = DAILY_BASE + DAILY_STREAK_BONUS * (min(streak, DAILY_STREAK_MAX) - 1)
     await bot.add(inter.guild_id, inter.user.id, reward)
     await bot.set_field(inter.guild_id, inter.user.id, last_daily=now, streak=streak)
-    await inter.response.send_message(embed=embed(
+    await reply(inter, embed=embed(
         "🎁 Ежедневная награда", f"Ты получил **{fmt(reward)}**\nСерия: **{streak}** дн."))
 
 
@@ -260,13 +282,13 @@ async def work(inter: discord.Interaction):
     now = int(time.time())
     if now - u["last_work"] < WORK_COOLDOWN:
         left = WORK_COOLDOWN - (now - u["last_work"])
-        return await inter.response.send_message(
+        return await reply(inter, 
             f"😮‍💨 Ты устал. Отдохни ещё **{fmt_time(left)}**", ephemeral=True)
     amount = random.randint(WORK_MIN, WORK_MAX)
     await bot.add(inter.guild_id, inter.user.id, amount)
     await bot.set_field(inter.guild_id, inter.user.id, last_work=now)
     text = random.choice(WORK_TEXTS).format(x=f"**{fmt(amount)}**")
-    await inter.response.send_message(embed=embed("💼 Работа", text, discord.Color.green()))
+    await reply(inter, embed=embed("💼 Работа", text, discord.Color.green()))
 
 
 @bot.tree.command(name="перевод", description="Перевести монеты другому участнику")
@@ -274,13 +296,13 @@ async def work(inter: discord.Interaction):
 async def pay(inter: discord.Interaction, участник: discord.Member,
               сумма: app_commands.Range[int, 1]):
     if участник.bot or участник.id == inter.user.id:
-        return await inter.response.send_message("Так нельзя 🙃", ephemeral=True)
+        return await reply(inter, "Так нельзя 🙃", ephemeral=True)
     u = await bot.get_user(inter.guild_id, inter.user.id)
     if u["balance"] < сумма:
-        return await inter.response.send_message("Недостаточно монет в кошельке", ephemeral=True)
+        return await reply(inter, "Недостаточно монет в кошельке", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, -сумма)
     await bot.add(inter.guild_id, участник.id, сумма)
-    await inter.response.send_message(
+    await reply(inter, 
         f"✅ {inter.user.mention} перевёл {участник.mention} **{fmt(сумма)}**")
 
 
@@ -290,10 +312,10 @@ async def deposit(inter: discord.Interaction, сумма: app_commands.Range[int
     u = await bot.get_user(inter.guild_id, inter.user.id)
     amount = u["balance"] if сумма == 0 else сумма
     if amount <= 0 or amount > u["balance"]:
-        return await inter.response.send_message("Недостаточно монет", ephemeral=True)
+        return await reply(inter, "Недостаточно монет", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, -amount)
     await bot.add(inter.guild_id, inter.user.id, amount, "bank")
-    await inter.response.send_message(f"🏦 Положил в банк **{fmt(amount)}**")
+    await reply(inter, f"🏦 Положил в банк **{fmt(amount)}**")
 
 
 @bot.tree.command(name="снять", description="Снять монеты из банка")
@@ -302,41 +324,41 @@ async def withdraw(inter: discord.Interaction, сумма: app_commands.Range[in
     u = await bot.get_user(inter.guild_id, inter.user.id)
     amount = u["bank"] if сумма == 0 else сумма
     if amount <= 0 or amount > u["bank"]:
-        return await inter.response.send_message("В банке столько нет", ephemeral=True)
+        return await reply(inter, "В банке столько нет", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, amount)
     await bot.add(inter.guild_id, inter.user.id, -amount, "bank")
-    await inter.response.send_message(f"🏦 Снял из банка **{fmt(amount)}**")
+    await reply(inter, f"🏦 Снял из банка **{fmt(amount)}**")
 
 
 @bot.tree.command(name="ограбить", description="Попробовать украсть монеты из кошелька")
 @app_commands.describe(участник="Кого грабим")
 async def rob(inter: discord.Interaction, участник: discord.Member):
     if участник.bot or участник.id == inter.user.id:
-        return await inter.response.send_message("Так нельзя 🙃", ephemeral=True)
+        return await reply(inter, "Так нельзя 🙃", ephemeral=True)
     me = await bot.get_user(inter.guild_id, inter.user.id)
     now = int(time.time())
     if now - me["last_rob"] < ROB_COOLDOWN:
-        return await inter.response.send_message(
+        return await reply(inter, 
             f"🚓 Затаись ещё на **{fmt_time(ROB_COOLDOWN - (now - me['last_rob']))}**",
             ephemeral=True)
     victim = await bot.get_user(inter.guild_id, участник.id)
     if victim["balance"] < 50:
-        return await inter.response.send_message("У него в кошельке почти пусто", ephemeral=True)
+        return await reply(inter, "У него в кошельке почти пусто", ephemeral=True)
     if me["balance"] < 100:
-        return await inter.response.send_message(
+        return await reply(inter, 
             "Нужно хотя бы 100 монет в кошельке (на штраф, если поймают)", ephemeral=True)
     await bot.set_field(inter.guild_id, inter.user.id, last_rob=now)
     if random.random() < ROB_CHANCE:
         stolen = random.randint(victim["balance"] // 10, victim["balance"] // 3)
         await bot.add(inter.guild_id, участник.id, -stolen)
         await bot.add(inter.guild_id, inter.user.id, stolen)
-        await inter.response.send_message(
+        await reply(inter, 
             f"🦹 {inter.user.mention} украл у {участник.mention} **{fmt(stolen)}**!")
     else:
         fine = random.randint(50, min(300, me["balance"]))
         await bot.add(inter.guild_id, inter.user.id, -fine)
         await bot.add(inter.guild_id, участник.id, fine)
-        await inter.response.send_message(
+        await reply(inter, 
             f"🚨 {inter.user.mention} попался и выплатил {участник.mention} штраф **{fmt(fine)}**")
 
 
@@ -349,7 +371,7 @@ async def top(inter: discord.Interaction):
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"{medals[i] if i < 3 else f'`{i+1}.`'} <@{uid}> — **{fmt(t)}**"
              for i, (uid, t) in enumerate(rows)]
-    await inter.response.send_message(embed=embed("🏆 Топ богачей", "\n".join(lines) or "Пусто"),
+    await reply(inter, embed=embed("🏆 Топ богачей", "\n".join(lines) or "Пусто"),
                                       allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -357,7 +379,7 @@ async def top(inter: discord.Interaction):
 async def take_bet(inter: discord.Interaction, bet: int) -> bool:
     u = await bot.get_user(inter.guild_id, inter.user.id)
     if u["balance"] < bet:
-        await inter.response.send_message("Недостаточно монет для ставки", ephemeral=True)
+        await reply(inter, "Недостаточно монет для ставки", ephemeral=True)
         return False
     await bot.add(inter.guild_id, inter.user.id, -bet)
     return True
@@ -377,7 +399,7 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         msg, col = f"Выпал **{result}** — ты выиграл **{fmt(ставка)}**! 🎉", discord.Color.green()
     else:
         msg, col = f"Выпал **{result}** — ты проиграл **{fmt(ставка)}** 😢", discord.Color.red()
-    await inter.response.send_message(embed=embed("🪙 Монетка", msg, col))
+    await reply(inter, embed=embed("🪙 Монетка", msg, col))
 
 
 SLOTS = ["🍒", "🍋", "🍇", "🔔", "💎", "7️⃣"]
@@ -403,7 +425,7 @@ async def slots(inter: discord.Interaction, ставка: app_commands.Range[int
         text, col = f"Мимо. −**{fmt(ставка)}**", discord.Color.red()
     if win:
         await bot.add(inter.guild_id, inter.user.id, win)
-    await inter.response.send_message(embed=embed("🎰 Слоты", f"## {line}\n{text}", col))
+    await reply(inter, embed=embed("🎰 Слоты", f"## {line}\n{text}", col))
 
 
 # ═════════ Магазин ═════════
@@ -417,7 +439,7 @@ async def shop(inter: discord.Interaction):
     for i, name, price, desc, role_id in rows:
         extra = f"\nРоль: <@&{role_id}>" if role_id else ""
         e.add_field(name=f"#{i} · {name} — {fmt(price)}", value=(desc or "—") + extra, inline=False)
-    await inter.response.send_message(embed=e)
+    await reply(inter, embed=e)
 
 
 @bot.tree.command(name="купить", description="Купить товар")
@@ -427,23 +449,23 @@ async def buy(inter: discord.Interaction, номер: int):
         "SELECT name,price,role_id FROM shop WHERE id=? AND guild_id=?", (номер, inter.guild_id))
     item = await cur.fetchone()
     if not item:
-        return await inter.response.send_message("Нет такого товара", ephemeral=True)
+        return await reply(inter, "Нет такого товара", ephemeral=True)
     name, price, role_id = item
     u = await bot.get_user(inter.guild_id, inter.user.id)
     if u["balance"] < price:
-        return await inter.response.send_message(
+        return await reply(inter, 
             f"Не хватает {fmt(price - u['balance'])}", ephemeral=True)
     if role_id:
         role = inter.guild.get_role(role_id)
         if role is None:
-            return await inter.response.send_message("Роль товара удалена, сообщи админу",
+            return await reply(inter, "Роль товара удалена, сообщи админу",
                                                      ephemeral=True)
         if role in inter.user.roles:
-            return await inter.response.send_message("У тебя уже есть эта роль", ephemeral=True)
+            return await reply(inter, "У тебя уже есть эта роль", ephemeral=True)
         try:
             await inter.user.add_roles(role, reason="Покупка в магазине")
         except discord.Forbidden:
-            return await inter.response.send_message(
+            return await reply(inter, 
                 "У бота нет прав выдать эту роль (его роль должна быть выше)", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, -price)
     await bot.db.execute(
@@ -451,7 +473,7 @@ async def buy(inter: discord.Interaction, номер: int):
         "ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET qty=qty+1",
         (inter.guild_id, inter.user.id, номер))
     await bot.db.commit()
-    await inter.response.send_message(f"🛍️ Ты купил **{name}** за **{fmt(price)}**")
+    await reply(inter, f"🛍️ Ты купил **{name}** за **{fmt(price)}**")
 
 
 @bot.tree.command(name="инвентарь", description="Твои покупки")
@@ -463,7 +485,7 @@ async def inventory(inter: discord.Interaction, участник: discord.Member
         "WHERE i.guild_id=? AND i.user_id=? AND i.qty>0", (inter.guild_id, m.id))
     rows = await cur.fetchall()
     text = "\n".join(f"• {n} ×{q}" for n, q in rows) or "Пусто"
-    await inter.response.send_message(embed=embed(f"🎒 Инвентарь {m.display_name}", text))
+    await reply(inter, embed=embed(f"🎒 Инвентарь {m.display_name}", text))
 
 
 # ═════════ Админ-команды ═════════
@@ -475,13 +497,13 @@ admin = app_commands.Group(name="эко", description="Управление эк
 @admin.command(name="выдать", description="Выдать монеты")
 async def a_give(inter: discord.Interaction, участник: discord.Member, сумма: int):
     await bot.add(inter.guild_id, участник.id, сумма)
-    await inter.response.send_message(f"✅ Выдано {участник.mention}: **{fmt(сумма)}**")
+    await reply(inter, f"✅ Выдано {участник.mention}: **{fmt(сумма)}**")
 
 
 @admin.command(name="забрать", description="Забрать монеты из кошелька")
 async def a_take(inter: discord.Interaction, участник: discord.Member, сумма: int):
     await bot.add(inter.guild_id, участник.id, -сумма)
-    await inter.response.send_message(f"✅ Забрано у {участник.mention}: **{fmt(сумма)}**")
+    await reply(inter, f"✅ Забрано у {участник.mention}: **{fmt(сумма)}**")
 
 
 @admin.command(name="сбросить", description="Обнулить участника")
@@ -491,7 +513,7 @@ async def a_reset(inter: discord.Interaction, участник: discord.Member):
     await bot.db.execute("DELETE FROM inventory WHERE guild_id=? AND user_id=?",
                          (inter.guild_id, участник.id))
     await bot.db.commit()
-    await inter.response.send_message(f"♻️ {участник.mention} обнулён")
+    await reply(inter, f"♻️ {участник.mention} обнулён")
 
 
 @admin.command(name="товар_добавить", description="Добавить товар в магазин")
@@ -504,14 +526,14 @@ async def a_add_item(inter: discord.Interaction, название: str,
         "INSERT INTO shop(guild_id,name,price,description,role_id) VALUES(?,?,?,?,?)",
         (inter.guild_id, название, цена, описание, роль.id if роль else None))
     await bot.db.commit()
-    await inter.response.send_message(f"✅ Товар #{cur.lastrowid} **{название}** добавлен")
+    await reply(inter, f"✅ Товар #{cur.lastrowid} **{название}** добавлен")
 
 
 @admin.command(name="товар_удалить", description="Удалить товар")
 async def a_del_item(inter: discord.Interaction, номер: int):
     await bot.db.execute("DELETE FROM shop WHERE id=? AND guild_id=?", (номер, inter.guild_id))
     await bot.db.commit()
-    await inter.response.send_message(f"🗑️ Товар #{номер} удалён")
+    await reply(inter, f"🗑️ Товар #{номер} удалён")
 
 
 bot.tree.add_command(admin)
@@ -522,10 +544,10 @@ async def on_app_error(inter: discord.Interaction, error: app_commands.AppComman
     msg = "Нет прав на эту команду" if isinstance(error, app_commands.MissingPermissions) \
         else f"Ошибка: {error}"
     print("Ошибка команды:", repr(error))
-    if inter.response.is_done():
-        await inter.followup.send(msg, ephemeral=True)
-    else:
-        await inter.response.send_message(msg, ephemeral=True)
+    try:
+        await reply(inter, msg, ephemeral=True)
+    except discord.HTTPException:
+        pass
 
 
 if __name__ == "__main__":
