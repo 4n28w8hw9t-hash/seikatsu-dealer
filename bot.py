@@ -128,6 +128,11 @@ class EconomyBot(commands.Bot):
         except Exception as ex:
             print("Баннеры не созданы:", ex)
             self.banners = {}
+        ready = os.path.join(os.path.dirname(BANNER_PATH), "banners")
+        if os.path.isdir(ready):  # готовые баннеры с персонажами
+            for fn in os.listdir(ready):
+                if fn.endswith(".png"):
+                    self.banners[fn[:-4]] = os.path.join(ready, fn)
         try:  # свои эмодзи бота
             have = {em.name: em for em in await self.fetch_application_emojis()}
             for name in art.EMOJIS:
