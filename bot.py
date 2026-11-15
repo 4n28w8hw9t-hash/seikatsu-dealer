@@ -2,16 +2,18 @@
 Discord-бот с экономикой.
 discord.py 2.x + SQLite (aiosqlite). Все команды — слэш-команды.
 """
+import math
 import os
 import random
 import asyncio
 import io
 import time
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 import art
@@ -119,7 +121,14 @@ class EconomyBot(commands.Bot):
             guild_id INTEGER, user_id INTEGER, item_id INTEGER,
             qty INTEGER DEFAULT 0, PRIMARY KEY(guild_id, user_id, item_id));
         """)
+        await self.db.execute(
+            "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+        try:
+            await self.db.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
+        except Exception:
+            pass  # колонка уже есть
         await self.db.commit()
+        tick.start()
 
         try:  # баннеры команд (рисуются один раз и лежат в data/)
             self.banners = await asyncio.to_thread(
@@ -222,8 +231,8 @@ async def on_guild_join(guild: discord.Guild):
             "Здесь у каждой монеты есть хозяин — и все они проходят через меня.\n\n"
             "**С чего начать**\n"
             "💰 `/баланс` — твой кошелёк и банк\n"
-            "🎁 `/ежедневно` — награда каждый день\n"
-            "💼 `/работа` — заработать монет\n"
+            "🎁 Зарплата приходит сама каждый день в 03:00 МСК\n"
+            "💼 `/профиль` — уровень и профессия (растут за общение)\n"
             "🏦 `/положить` — спрятать деньги от грабителей\n"
             "🎲 `/монетка` · `/слоты` — испытать удачу\n"
             "🛒 `/магазин` — потратить заработанное\n"
@@ -242,15 +251,128 @@ async def on_guild_join(guild: discord.Guild):
         await ch.send(embed=e)
 
 
+# ═════════ Уровни и профессии ═════════
+MSK = timezone(timedelta(hours=3))
+PAY_HOUR = 3                # зарплата в 03:00 по Москве
+XP_MSG = (15, 25)           # опыт за сообщение (не чаще раза в минуту)
+XP_VOICE = 10               # опыт за минуту в голосовом канале
+# (с какого уровня, профессия, зарплата в день)
+JOBS = [(1, "Разнорабочий", 100), (5, "Прораб", 200), (11, "Инженер", 350),
+        (21, "Директор", 550), (36, "Магнат", 800)]
+
+
+def level_of(xp: int) -> int:
+    return math.isqrt(max(xp, 0) // 100) + 1
+
+
+def xp_for(level: int) -> int:
+    return 100 * (level - 1) ** 2
+
+
+def job_of(level: int) -> tuple[str, int]:
+    name, pay = JOBS[0][1], JOBS[0][2]
+    for lvl, n, p in JOBS:
+        if level >= lvl:
+            name, pay = n, p
+    return name, pay
+
+
+async def get_xp(guild_id: int, user_id: int) -> int:
+    await bot.get_user(guild_id, user_id)
+    cur = await bot.db.execute(
+        "SELECT xp FROM users WHERE guild_id=? AND user_id=?", (guild_id, user_id))
+    return (await cur.fetchone())[0] or 0
+
+
+async def add_xp(guild_id: int, user_id: int, amount: int) -> str | None:
+    """Начисляет опыт. Возвращает название новой профессии, если она сменилась."""
+    old = await get_xp(guild_id, user_id)
+    await bot.add(guild_id, user_id, amount, "xp")
+    a, b = job_of(level_of(old))[0], job_of(level_of(old + amount))[0]
+    return b if a != b else None
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
     key = (message.guild.id, message.author.id)
     now = time.time()
-    if now - bot.msg_cd.get(key, 0) >= MSG_COOLDOWN:
-        bot.msg_cd[key] = now
-        await bot.add(*key, random.randint(*MSG_REWARD))
+    if now - bot.msg_cd.get(key, 0) < MSG_COOLDOWN:
+        return
+    bot.msg_cd[key] = now
+    job = await add_xp(*key, random.randint(*XP_MSG))
+    if job:
+        try:
+            await message.channel.send(
+                f"🎉 {message.author.mention} получает новую профессию: **{job}**!")
+        except discord.HTTPException:
+            pass
+
+
+async def pay_salaries(today: str):
+    await bot.db.execute("UPDATE meta SET value=? WHERE key='last_pay'", (today,))
+    cur = await bot.db.execute("SELECT guild_id,user_id,xp FROM users")
+    count: dict[int, int] = {}
+    for g, u, xp in await cur.fetchall():
+        await bot.db.execute(
+            "UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=?",
+            (job_of(level_of(xp or 0))[1], g, u))
+        count[g] = count.get(g, 0) + 1
+    await bot.db.commit()
+    for g, n in count.items():
+        guild = bot.get_guild(g)
+        ch = welcome_channel(guild) if guild else None
+        if ch is None:
+            continue
+        e = embed("💰 Зарплата выплачена",
+                  f"Монеты получили участники: **{n}**.\n"
+                  "Чем выше уровень, тем выше профессия и доход — `/профиль`")
+        kw = {}
+        path = getattr(bot, "banners", {}).get("daily")
+        if path and os.path.exists(path):
+            e.set_image(url="attachment://card.png")
+            kw["file"] = discord.File(path, filename="card.png")
+        try:
+            await ch.send(embed=e, **kw)
+        except discord.HTTPException:
+            pass
+
+
+@tasks.loop(minutes=1)
+async def tick():
+    try:
+        for guild in bot.guilds:  # опыт за голосовой чат
+            for vc in guild.voice_channels:
+                if guild.afk_channel and vc.id == guild.afk_channel.id:
+                    continue
+                ids = []
+                for uid, vs in vc.voice_states.items():
+                    m = guild.get_member(uid)
+                    if (m and m.bot) or vs.self_deaf or vs.deaf:
+                        continue
+                    ids.append(uid)
+                if len(ids) >= 2:  # в одиночку опыт не идёт
+                    for uid in ids:
+                        await add_xp(guild.id, uid, XP_VOICE)
+        now = datetime.now(MSK)
+        today = now.strftime("%Y-%m-%d")
+        cur = await bot.db.execute("SELECT value FROM meta WHERE key='last_pay'")
+        row = await cur.fetchone()
+        if row is None:  # первый запуск: ближайшая выплата — в следующие 03:00
+            start = today if now.hour >= PAY_HOUR else \
+                (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            await bot.db.execute("INSERT INTO meta VALUES('last_pay',?)", (start,))
+            await bot.db.commit()
+        elif row[0] != today and now.hour >= PAY_HOUR:
+            await pay_salaries(today)
+    except Exception as ex:
+        print("Ошибка в tick:", repr(ex))
+
+
+@tick.before_loop
+async def _tick_wait():
+    await bot.wait_until_ready()
 
 
 # ═════════ Помощь ═════════
@@ -263,7 +385,7 @@ async def help_cmd(inter: discord.Interaction):
         color=discord.Color.from_rgb(209, 53, 57),
     )
     e.add_field(name=f"{E('sd_gift', '💰')} Заработок",
-                value="`/ежедневно` — награда раз в сутки\n`/работа` — раз в час\nМонеты за общение в чате",
+                value="Зарплата каждый день в 03:00 МСК\nОпыт за чат и голосовые\n`/профиль` — уровень и профессия",
                 inline=True)
     e.add_field(name=f"{E('sd_bank', '🏦')} Деньги",
                 value="`/баланс` · `/перевод`\n`/положить` · `/снять`\nБанк защищает от кражи",
@@ -296,35 +418,27 @@ async def balance(inter: discord.Interaction, участник: discord.Member |
     await send_card(inter, e, "balance")
 
 
-@bot.tree.command(name="ежедневно", description="Забрать ежедневную награду")
-async def daily(inter: discord.Interaction):
-    u = await bot.get_user(inter.guild_id, inter.user.id)
-    now = int(time.time())
-    passed = now - u["last_daily"]
-    if passed < 86400:
-        return await reply(inter, 
-            f"⏳ Следующая награда через **{fmt_time(86400 - passed)}**", ephemeral=True)
-    streak = u["streak"] + 1 if passed < 2 * 86400 else 1
-    reward = DAILY_BASE + DAILY_STREAK_BONUS * (min(streak, DAILY_STREAK_MAX) - 1)
-    await bot.add(inter.guild_id, inter.user.id, reward)
-    await bot.set_field(inter.guild_id, inter.user.id, last_daily=now, streak=streak)
-    await send_card(inter, embed(
-        "🎁 Ежедневная награда", f"Ты получил **{fmt(reward)}**\nСерия: **{streak}** дн."), "daily")
-
-
-@bot.tree.command(name="работа", description="Поработать и заработать монет")
-async def work(inter: discord.Interaction):
-    u = await bot.get_user(inter.guild_id, inter.user.id)
-    now = int(time.time())
-    if now - u["last_work"] < WORK_COOLDOWN:
-        left = WORK_COOLDOWN - (now - u["last_work"])
-        return await reply(inter, 
-            f"😮‍💨 Ты устал. Отдохни ещё **{fmt_time(left)}**", ephemeral=True)
-    amount = random.randint(WORK_MIN, WORK_MAX)
-    await bot.add(inter.guild_id, inter.user.id, amount)
-    await bot.set_field(inter.guild_id, inter.user.id, last_work=now)
-    text = random.choice(WORK_TEXTS).format(x=f"**{fmt(amount)}**")
-    await send_card(inter, embed("💼 Работа", text, discord.Color.green()), "work")
+@bot.tree.command(name="профиль", description="Уровень, профессия и зарплата")
+@app_commands.describe(участник="Чей профиль посмотреть")
+async def profile(inter: discord.Interaction, участник: discord.Member | None = None):
+    m = участник or inter.user
+    xp = await get_xp(inter.guild_id, m.id)
+    lvl = level_of(xp)
+    job, pay = job_of(lvl)
+    have, need = xp - xp_for(lvl), xp_for(lvl + 1) - xp_for(lvl)
+    e = embed(f"Профиль {m.display_name}")
+    e.add_field(name="Уровень", value=f"**{lvl}**")
+    e.add_field(name="Профессия", value=f"**{job}**")
+    e.add_field(name="Зарплата", value=f"{fmt(pay)} в день")
+    e.add_field(name="Опыт до следующего уровня", value=f"{have} / {need}", inline=False)
+    nxt = [(l, n, p) for l, n, p in JOBS if l > lvl]
+    if nxt:
+        e.add_field(name="Следующая профессия",
+                    value=f"**{nxt[0][1]}** с {nxt[0][0]} уровня — {fmt(nxt[0][2])} в день",
+                    inline=False)
+    e.set_footer(text="Опыт идёт за сообщения в чате и время в голосовых. Зарплата — в 03:00 МСК")
+    e.set_thumbnail(url=m.display_avatar.url)
+    await send_card(inter, e, "work")
 
 
 @bot.tree.command(name="перевод", description="Перевести монеты другому участнику")
