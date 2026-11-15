@@ -128,11 +128,6 @@ class EconomyBot(commands.Bot):
         except Exception as ex:
             print("Баннеры не созданы:", ex)
             self.banners = {}
-        ready = os.path.join(os.path.dirname(BANNER_PATH), "banners")
-        if os.path.isdir(ready):  # готовые баннеры с персонажами
-            for fn in os.listdir(ready):
-                if fn.endswith(".png"):
-                    self.banners[fn[:-4]] = os.path.join(ready, fn)
         try:  # свои эмодзи бота
             have = {em.name: em for em in await self.fetch_application_emojis()}
             for name in art.EMOJIS:
@@ -233,8 +228,9 @@ async def on_guild_join(guild: discord.Guild):
         color=discord.Color.from_rgb(209, 53, 57),
     )
     e.set_footer(text="Админам: /эко — управление экономикой и магазином")
-    if os.path.exists(BANNER_PATH):
-        file = discord.File(BANNER_PATH, filename="banner.png")
+    bpath = getattr(bot, "banners", {}).get("welcome", BANNER_PATH)
+    if os.path.exists(bpath):
+        file = discord.File(bpath, filename="banner.png")
         e.set_image(url="attachment://banner.png")
         await ch.send(embed=e, file=file)
     else:
