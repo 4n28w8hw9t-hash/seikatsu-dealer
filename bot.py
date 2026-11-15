@@ -392,7 +392,7 @@ async def help_cmd(inter: discord.Interaction):
                 inline=True)
     e.add_field(name="\u200b", value="\u200b", inline=False)
     e.add_field(name=f"{E('sd_dice', '🎲')} Удача",
-                value="`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха",
+                value="`/дуэль` — на монеты с игроком\n`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха",
                 inline=True)
     e.add_field(name=f"{E('sd_shop', '🛒')} Магазин",
                 value="`/магазин` · `/купить`\n`/инвентарь`\nРоли за монеты",
@@ -438,7 +438,8 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
                     inline=False)
     e.set_footer(text="Опыт идёт за сообщения в чате и время в голосовых. Зарплата — в 03:00 МСК")
     e.set_thumbnail(url=m.display_avatar.url)
-    await send_card(inter, e, "work")
+    key = f"job{max(i for i, j in enumerate(JOBS) if lvl >= j[0]) + 1}"
+    await send_card(inter, e, key if key in getattr(bot, "banners", {}) else "work")
 
 
 @bot.tree.command(name="перевод", description="Перевести монеты другому участнику")
@@ -578,6 +579,77 @@ async def slots(inter: discord.Interaction, ставка: app_commands.Range[int
     if win:
         await bot.add(inter.guild_id, inter.user.id, win)
     await send_card(inter, embed("🎰 Слоты", f"## {line}\n{text}", col), "slots")
+
+
+# ═════════ Дуэли ═════════
+class DuelView(discord.ui.View):
+    def __init__(self, a: discord.Member, b: discord.Member, bet: int):
+        super().__init__(timeout=60)
+        self.a, self.b, self.bet = a, b, bet
+        self.message = None
+
+    def card(self, text: str, color=discord.Color.gold()) -> discord.Embed:
+        e = embed("⚔️ Дуэль", text, color)
+        if "duel" in getattr(bot, "banners", {}):
+            e.set_image(url="attachment://card.png")
+        return e
+
+    async def interaction_check(self, inter: discord.Interaction) -> bool:
+        if inter.user.id != self.b.id:
+            await inter.response.send_message("Это не твоя дуэль", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Принять", style=discord.ButtonStyle.success)
+    async def accept(self, inter: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        g = inter.guild_id
+        ua, ub = await bot.get_user(g, self.a.id), await bot.get_user(g, self.b.id)
+        if ua["balance"] < self.bet or ub["balance"] < self.bet:
+            return await inter.response.edit_message(view=None, embed=self.card(
+                "Дуэль отменена: у кого-то не хватает монет в кошельке.",
+                discord.Color.dark_grey()))
+        win, lose = random.sample([self.a, self.b], 2)
+        await bot.add(g, lose.id, -self.bet)
+        await bot.add(g, win.id, self.bet)
+        await inter.response.edit_message(view=None, embed=self.card(
+            f"{win.mention} побеждает {lose.mention} и забирает **{fmt(self.bet)}**!",
+            discord.Color.green()))
+
+    @discord.ui.button(label="Отказаться", style=discord.ButtonStyle.danger)
+    async def decline(self, inter: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await inter.response.edit_message(view=None, embed=self.card(
+            f"{self.b.mention} отказался от дуэли с {self.a.mention}.",
+            discord.Color.dark_grey()))
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(view=None, embed=self.card(
+                    f"{self.b.mention} не ответил на вызов {self.a.mention}.",
+                    discord.Color.dark_grey()))
+            except discord.HTTPException:
+                pass
+
+
+@bot.tree.command(name="дуэль", description="Вызвать участника на дуэль на монеты")
+@app_commands.describe(участник="Кого вызываешь", ставка="Сколько ставит каждый")
+async def duel(inter: discord.Interaction, участник: discord.Member,
+               ставка: app_commands.Range[int, 10]):
+    if участник.bot or участник.id == inter.user.id:
+        return await reply(inter, "Так нельзя 🙃", ephemeral=True)
+    me = await bot.get_user(inter.guild_id, inter.user.id)
+    if me["balance"] < ставка:
+        return await reply(inter, "Недостаточно монет в кошельке", ephemeral=True)
+    him = await bot.get_user(inter.guild_id, участник.id)
+    if him["balance"] < ставка:
+        return await reply(inter, "У соперника не хватает монет на такую ставку", ephemeral=True)
+    view = DuelView(inter.user, участник, ставка)
+    view.message = await send_card(inter, view.card(
+        f"{inter.user.mention} вызывает {участник.mention} на дуэль!\n"
+        f"Ставка: **{fmt(ставка)}** с каждого, победитель забирает всё.\n"
+        "На ответ есть 60 секунд."), "duel", view=view, content=участник.mention)
 
 
 # ═════════ Магазин ═════════
