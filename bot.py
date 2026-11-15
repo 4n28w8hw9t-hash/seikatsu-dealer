@@ -4,6 +4,8 @@ discord.py 2.x + SQLite (aiosqlite). Все команды — слэш-кома
 """
 import os
 import random
+import asyncio
+import io
 import time
 
 import aiosqlite
@@ -11,6 +13,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+
+import art
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
@@ -43,7 +47,7 @@ WORK_TEXTS = [
 
 
 def fmt(n: int) -> str:
-    return f"{n:,}".replace(",", " ") + f" {CURRENCY}"
+    return f"{n:,}".replace(",", " ") + " " + E("sd_coin", CURRENCY)
 
 
 def fmt_time(sec: int) -> str:
@@ -76,6 +80,18 @@ async def reply(inter: discord.Interaction, content=None, **kw):
     return await inter.response.send_message(**kw)
 
 
+def E(name: str, fallback: str = "") -> str:
+    return getattr(bot, "emo", {}).get(name, fallback)
+
+
+async def send_card(inter: discord.Interaction, e: discord.Embed, key: str, **kw):
+    path = getattr(bot, "banners", {}).get(key)
+    if path and os.path.exists(path):
+        e.set_image(url="attachment://card.png")
+        kw["file"] = discord.File(path, filename="card.png")
+    return await reply(inter, embed=e, **kw)
+
+
 class EconomyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -104,6 +120,24 @@ class EconomyBot(commands.Bot):
             qty INTEGER DEFAULT 0, PRIMARY KEY(guild_id, user_id, item_id));
         """)
         await self.db.commit()
+
+        try:  # баннеры команд (рисуются один раз и лежат в data/)
+            self.banners = await asyncio.to_thread(
+                art.build_all, BANNER_PATH, os.path.join(DATA_DIR, "art_v1"))
+        except Exception as ex:
+            print("Баннеры не созданы:", ex)
+            self.banners = {}
+        try:  # свои эмодзи бота
+            have = {em.name: em for em in await self.fetch_application_emojis()}
+            for name in art.EMOJIS:
+                if name not in have:
+                    buf = io.BytesIO()
+                    art.emoji_png(name).save(buf, "PNG")
+                    have[name] = await self.create_application_emoji(name=name, image=buf.getvalue())
+            self.emo = {n: str(em) for n, em in have.items()}
+        except Exception as ex:
+            print("Эмодзи не загружены:", ex)
+            self.emo = {}
 
         if GUILD_ID:
             g = discord.Object(id=int(GUILD_ID))
@@ -221,29 +255,24 @@ async def help_cmd(inter: discord.Interaction):
                      "Зарабатывай, копи, рискуй и трать — все монеты проходят через меня."),
         color=discord.Color.from_rgb(209, 53, 57),
     )
-    e.add_field(name="💰 Заработок",
+    e.add_field(name=f"{E('sd_gift', '💰')} Заработок",
                 value="`/ежедневно` — награда раз в сутки\n`/работа` — раз в час\nМонеты за общение в чате",
                 inline=True)
-    e.add_field(name="🏦 Деньги",
+    e.add_field(name=f"{E('sd_bank', '🏦')} Деньги",
                 value="`/баланс` · `/перевод`\n`/положить` · `/снять`\nБанк защищает от кражи",
                 inline=True)
     e.add_field(name="\u200b", value="\u200b", inline=False)
-    e.add_field(name="🎲 Удача",
+    e.add_field(name=f"{E('sd_dice', '🎲')} Удача",
                 value="`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха",
                 inline=True)
-    e.add_field(name="🛒 Магазин",
+    e.add_field(name=f"{E('sd_shop', '🛒')} Магазин",
                 value="`/магазин` · `/купить`\n`/инвентарь`\nРоли за монеты",
                 inline=True)
-    e.add_field(name="🏆 Рейтинг", value="`/топ` — самые богатые", inline=False)
+    e.add_field(name=f"{E('sd_top', '🏆')} Рейтинг", value="`/топ` — самые богатые", inline=False)
     e.set_footer(text="Админам: /эко — управление экономикой и магазином")
     if bot.user:
         e.set_thumbnail(url=bot.user.display_avatar.url)
-    if os.path.exists(BANNER_PATH):
-        e.set_image(url="attachment://banner.png")
-        await reply(inter, 
-            embed=e, file=discord.File(BANNER_PATH, filename="banner.png"))
-    else:
-        await reply(inter, embed=e)
+    await send_card(inter, e, "help")
 
 
 # ═════════ Основные команды ═════════
@@ -257,7 +286,7 @@ async def balance(inter: discord.Interaction, участник: discord.Member |
     e.add_field(name="Банк", value=fmt(u["bank"]))
     e.add_field(name="Всего", value=fmt(u["balance"] + u["bank"]))
     e.set_thumbnail(url=m.display_avatar.url)
-    await reply(inter, embed=e)
+    await send_card(inter, e, "balance")
 
 
 @bot.tree.command(name="ежедневно", description="Забрать ежедневную награду")
@@ -272,8 +301,8 @@ async def daily(inter: discord.Interaction):
     reward = DAILY_BASE + DAILY_STREAK_BONUS * (min(streak, DAILY_STREAK_MAX) - 1)
     await bot.add(inter.guild_id, inter.user.id, reward)
     await bot.set_field(inter.guild_id, inter.user.id, last_daily=now, streak=streak)
-    await reply(inter, embed=embed(
-        "🎁 Ежедневная награда", f"Ты получил **{fmt(reward)}**\nСерия: **{streak}** дн."))
+    await send_card(inter, embed(
+        "🎁 Ежедневная награда", f"Ты получил **{fmt(reward)}**\nСерия: **{streak}** дн."), "daily")
 
 
 @bot.tree.command(name="работа", description="Поработать и заработать монет")
@@ -288,7 +317,7 @@ async def work(inter: discord.Interaction):
     await bot.add(inter.guild_id, inter.user.id, amount)
     await bot.set_field(inter.guild_id, inter.user.id, last_work=now)
     text = random.choice(WORK_TEXTS).format(x=f"**{fmt(amount)}**")
-    await reply(inter, embed=embed("💼 Работа", text, discord.Color.green()))
+    await send_card(inter, embed("💼 Работа", text, discord.Color.green()), "work")
 
 
 @bot.tree.command(name="перевод", description="Перевести монеты другому участнику")
@@ -371,8 +400,8 @@ async def top(inter: discord.Interaction):
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"{medals[i] if i < 3 else f'`{i+1}.`'} <@{uid}> — **{fmt(t)}**"
              for i, (uid, t) in enumerate(rows)]
-    await reply(inter, embed=embed("🏆 Топ богачей", "\n".join(lines) or "Пусто"),
-                                      allowed_mentions=discord.AllowedMentions.none())
+    await send_card(inter, embed("🏆 Топ богачей", "\n".join(lines) or "Пусто"), "top",
+                    allowed_mentions=discord.AllowedMentions.none())
 
 
 # ═════════ Казино ═════════
@@ -399,7 +428,7 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         msg, col = f"Выпал **{result}** — ты выиграл **{fmt(ставка)}**! 🎉", discord.Color.green()
     else:
         msg, col = f"Выпал **{result}** — ты проиграл **{fmt(ставка)}** 😢", discord.Color.red()
-    await reply(inter, embed=embed("🪙 Монетка", msg, col))
+    await send_card(inter, embed("🪙 Монетка", msg, col), "coinflip")
 
 
 SLOTS = ["🍒", "🍋", "🍇", "🔔", "💎", "7️⃣"]
@@ -425,7 +454,7 @@ async def slots(inter: discord.Interaction, ставка: app_commands.Range[int
         text, col = f"Мимо. −**{fmt(ставка)}**", discord.Color.red()
     if win:
         await bot.add(inter.guild_id, inter.user.id, win)
-    await reply(inter, embed=embed("🎰 Слоты", f"## {line}\n{text}", col))
+    await send_card(inter, embed("🎰 Слоты", f"## {line}\n{text}", col), "slots")
 
 
 # ═════════ Магазин ═════════
@@ -439,7 +468,7 @@ async def shop(inter: discord.Interaction):
     for i, name, price, desc, role_id in rows:
         extra = f"\nРоль: <@&{role_id}>" if role_id else ""
         e.add_field(name=f"#{i} · {name} — {fmt(price)}", value=(desc or "—") + extra, inline=False)
-    await reply(inter, embed=e)
+    await send_card(inter, e, "shop")
 
 
 @bot.tree.command(name="купить", description="Купить товар")
