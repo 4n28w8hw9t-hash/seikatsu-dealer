@@ -190,6 +190,40 @@ async def on_message(message: discord.Message):
         await bot.add(*key, random.randint(*MSG_REWARD))
 
 
+# ═════════ Помощь ═════════
+@bot.tree.command(name="помощь", description="Что умеет Seikatsu Dealer")
+async def help_cmd(inter: discord.Interaction):
+    e = discord.Embed(
+        title="🃏 Seikatsu Dealer",
+        description=("Банкир и крупье сервера **Seikatsu**.\n"
+                     "Зарабатывай, копи, рискуй и трать — все монеты проходят через меня."),
+        color=discord.Color.from_rgb(209, 53, 57),
+    )
+    e.add_field(name="💰 Заработок",
+                value="`/ежедневно` — награда раз в сутки\n`/работа` — раз в час\nМонеты за общение в чате",
+                inline=True)
+    e.add_field(name="🏦 Деньги",
+                value="`/баланс` · `/перевод`\n`/положить` · `/снять`\nБанк защищает от кражи",
+                inline=True)
+    e.add_field(name="\u200b", value="\u200b", inline=False)
+    e.add_field(name="🎲 Удача",
+                value="`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха",
+                inline=True)
+    e.add_field(name="🛒 Магазин",
+                value="`/магазин` · `/купить`\n`/инвентарь`\nРоли за монеты",
+                inline=True)
+    e.add_field(name="🏆 Рейтинг", value="`/топ` — самые богатые", inline=False)
+    e.set_footer(text="Админам: /эко — управление экономикой и магазином")
+    if bot.user:
+        e.set_thumbnail(url=bot.user.display_avatar.url)
+    if os.path.exists(BANNER_PATH):
+        e.set_image(url="attachment://banner.png")
+        await inter.response.send_message(
+            embed=e, file=discord.File(BANNER_PATH, filename="banner.png"))
+    else:
+        await inter.response.send_message(embed=e)
+
+
 # ═════════ Основные команды ═════════
 @bot.tree.command(name="баланс", description="Показать баланс")
 @app_commands.describe(участник="Чей баланс посмотреть")
