@@ -28,7 +28,9 @@ MSG_REWARD = (1, 5)         # монеты за сообщение в чате
 MSG_COOLDOWN = 60           # не чаще раза в минуту
 ROB_COOLDOWN = 2 * 60 * 60  # 2 часа
 ROB_CHANCE = 0.4
-DB_PATH = os.getenv("DB_PATH", "economy.db")
+DATA_DIR = os.getenv("DATA_DIR", ".")  # на хостинге — постоянная папка
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.getenv("DB_PATH") or os.path.join(DATA_DIR, "economy.db")
 
 WORK_TEXTS = [
     "Ты отработал смену на складе и получил {x}",
