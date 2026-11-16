@@ -113,7 +113,7 @@ BUTTONS = {
     "job:worker": ("Разнорабочий", "🧰", "work", _G),
     "job:thief": ("Грабитель", "🦹", "thief", _B),
     "job:mage": ("Маг", "🧙", "mage", _B),
-    "job:gambler": ("Шулер", "🎰", "gambler", _B),
+    "job:gambler": ("Шулер", "🎰", "slots", _B),
 }
 NAV = ["menu", "profile", "balance", "shop", "top"]
 
@@ -235,8 +235,15 @@ async def _deliver(inter: discord.Interaction, kw: dict, ephemeral: bool):
 
 
 async def reply(inter: discord.Interaction, content=None, *, embed=None, image=None,
-                rows=None, nav=True, ephemeral=True, allowed_mentions=None):
-    """Ответ, который видит только сам игрок. Кнопки ведут на другие страницы."""
+                rows=None, nav=True, ephemeral=True, allowed_mentions=None, key="deny"):
+    """Ответ, который видит только сам игрок. Кнопки ведут на другие страницы.
+
+    key — баннер для ответа без своей картинки (по умолчанию «отказ»), None — без баннера.
+    """
+    if image is None and key:
+        path = getattr(bot, "banners", {}).get(key)
+        if path and os.path.exists(path):
+            image = ("card.png", path)
     extra = {"allowed_mentions": allowed_mentions} if allowed_mentions is not None else {}
     if V2:
         try:
@@ -701,7 +708,7 @@ async def deposit(inter: discord.Interaction, сумма: app_commands.Range[int
         return await reply(inter, "Недостаточно монет", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, -amount)
     await bot.add(inter.guild_id, inter.user.id, amount, "bank")
-    await reply(inter, f"🏦 Положил в банк **{fmt(amount)}**", rows=[["dep", "wd"]])
+    await reply(inter, f"🏦 Положил в банк **{fmt(amount)}**", rows=[["dep", "wd"]], key="balance")
 
 
 @bot.tree.command(name="снять", description="Снять монеты из банка")
@@ -713,7 +720,7 @@ async def withdraw(inter: discord.Interaction, сумма: app_commands.Range[in
         return await reply(inter, "В банке столько нет", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, amount)
     await bot.add(inter.guild_id, inter.user.id, -amount, "bank")
-    await reply(inter, f"🏦 Снял из банка **{fmt(amount)}**", rows=[["dep", "wd"]])
+    await reply(inter, f"🏦 Снял из банка **{fmt(amount)}**", rows=[["dep", "wd"]], key="balance")
 
 
 @bot.tree.command(name="ограбить", description="Попробовать украсть монеты из кошелька")
@@ -1086,7 +1093,7 @@ async def buy(inter: discord.Interaction, номер: int):
         "ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET qty=qty+1",
         (inter.guild_id, inter.user.id, номер))
     await bot.db.commit()
-    await reply(inter, f"🛍️ Ты купил **{name}** за **{fmt(price)}**", rows=[["buy", "inv"]])
+    await reply(inter, f"🛍️ Ты купил **{name}** за **{fmt(price)}**", rows=[["buy", "inv"]], key="shop")
 
 
 @bot.tree.command(name="инвентарь", description="Твои покупки")
@@ -1098,7 +1105,7 @@ async def inventory(inter: discord.Interaction, участник: discord.Member
         "WHERE i.guild_id=? AND i.user_id=? AND i.qty>0", (inter.guild_id, m.id))
     rows = await cur.fetchall()
     text = "\n".join(f"• {n} ×{q}" for n, q in rows) or "Пусто"
-    await reply(inter, embed=embed(f"🎒 Инвентарь {m.display_name}", text), rows=[["shop", "buy"]])
+    await reply(inter, embed=embed(f"🎒 Инвентарь {m.display_name}", text), rows=[["shop", "buy"]], key="inv")
 
 
 # ═════════ Меню ═════════
@@ -1247,13 +1254,13 @@ admin = app_commands.Group(name="эко", description="Управление эк
 @admin.command(name="выдать", description="Выдать монеты")
 async def a_give(inter: discord.Interaction, участник: discord.Member, сумма: int):
     await bot.add(inter.guild_id, участник.id, сумма)
-    await reply(inter, f"✅ Выдано {участник.mention}: **{fmt(сумма)}**")
+    await reply(inter, f"✅ Выдано {участник.mention}: **{fmt(сумма)}**", key=None, nav=False)
 
 
 @admin.command(name="забрать", description="Забрать монеты из кошелька")
 async def a_take(inter: discord.Interaction, участник: discord.Member, сумма: int):
     await bot.add(inter.guild_id, участник.id, -сумма)
-    await reply(inter, f"✅ Забрано у {участник.mention}: **{fmt(сумма)}**")
+    await reply(inter, f"✅ Забрано у {участник.mention}: **{fmt(сумма)}**", key=None, nav=False)
 
 
 @admin.command(name="сбросить", description="Обнулить участника")
@@ -1263,7 +1270,7 @@ async def a_reset(inter: discord.Interaction, участник: discord.Member):
     await bot.db.execute("DELETE FROM inventory WHERE guild_id=? AND user_id=?",
                          (inter.guild_id, участник.id))
     await bot.db.commit()
-    await reply(inter, f"♻️ {участник.mention} обнулён")
+    await reply(inter, f"♻️ {участник.mention} обнулён", key=None, nav=False)
 
 
 @admin.command(name="товар_добавить", description="Добавить товар в магазин")
@@ -1276,14 +1283,14 @@ async def a_add_item(inter: discord.Interaction, название: str,
         "INSERT INTO shop(guild_id,name,price,description,role_id) VALUES(?,?,?,?,?)",
         (inter.guild_id, название, цена, описание, роль.id if роль else None))
     await bot.db.commit()
-    await reply(inter, f"✅ Товар #{cur.lastrowid} **{название}** добавлен")
+    await reply(inter, f"✅ Товар #{cur.lastrowid} **{название}** добавлен", key=None, nav=False)
 
 
 @admin.command(name="товар_удалить", description="Удалить товар")
 async def a_del_item(inter: discord.Interaction, номер: int):
     await bot.db.execute("DELETE FROM shop WHERE id=? AND guild_id=?", (номер, inter.guild_id))
     await bot.db.commit()
-    await reply(inter, f"🗑️ Товар #{номер} удалён")
+    await reply(inter, f"🗑️ Товар #{номер} удалён", key=None, nav=False)
 
 
 @admin.command(name="панель", description="Поставить в этот канал постоянное меню с кнопками")
@@ -1303,8 +1310,8 @@ async def a_panel(inter: discord.Interaction):
             kw = build_classic(**menu_page())
             await inter.channel.send(embed=kw["embed"], files=kw["attachments"], view=kw["view"])
     except discord.HTTPException:
-        return await reply(inter, "Не могу написать в этот канал — у бота нет прав")
-    await reply(inter, "✅ Панель поставлена. Закрепи сообщение, чтобы оно не уезжало.")
+        return await reply(inter, "Не могу написать в этот канал — у бота нет прав", key=None, nav=False)
+    await reply(inter, "✅ Панель поставлена. Закрепи сообщение, чтобы оно не уезжало.", key=None, nav=False)
 
 
 bot.tree.add_command(admin)
@@ -1316,7 +1323,7 @@ async def on_app_error(inter: discord.Interaction, error: app_commands.AppComman
         else f"Ошибка: {error}"
     print("Ошибка команды:", repr(error))
     try:
-        await reply(inter, msg)
+        await reply(inter, msg, key=None)
     except discord.HTTPException:
         pass
 
