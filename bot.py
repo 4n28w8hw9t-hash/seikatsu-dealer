@@ -127,6 +127,12 @@ class EconomyBot(commands.Bot):
             await self.db.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
         except Exception:
             pass  # колонка уже есть
+        for col in ("cls TEXT", "cls_xp INTEGER DEFAULT 0", "cls_changed INTEGER DEFAULT 0",
+                    "skill_ready INTEGER DEFAULT 0", "skill_active INTEGER DEFAULT 0"):
+            try:
+                await self.db.execute(f"ALTER TABLE users ADD COLUMN {col}")
+            except Exception:
+                pass
         await self.db.commit()
         tick.start()
 
@@ -312,12 +318,19 @@ async def on_message(message: discord.Message):
 
 async def pay_salaries(today: str):
     await bot.db.execute("UPDATE meta SET value=? WHERE key='last_pay'", (today,))
-    cur = await bot.db.execute("SELECT guild_id,user_id,xp FROM users")
+    cur = await bot.db.execute(
+        "SELECT guild_id,user_id,xp,cls,cls_xp,skill_active FROM users")
     count: dict[int, int] = {}
-    for g, u, xp in await cur.fetchall():
+    for g, u, xp, cls, cxp, active in await cur.fetchall():
+        pay = job_of(level_of(xp or 0))[1]
+        if cls == "mage" and active:  # зелье удачи
+            pay = int(pay * mage_mult(cls_level(cxp or 0)))
+            await bot.db.execute(
+                "UPDATE users SET skill_active=0, skill_ready=?, cls_xp=cls_xp+1 "
+                "WHERE guild_id=? AND user_id=?",
+                (int(time.time()) + CLASSES["mage"][3], g, u))
         await bot.db.execute(
-            "UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=?",
-            (job_of(level_of(xp or 0))[1], g, u))
+            "UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=?", (pay, g, u))
         count[g] = count.get(g, 0) + 1
     await bot.db.commit()
     for g, n in count.items():
@@ -392,7 +405,7 @@ async def help_cmd(inter: discord.Interaction):
                 inline=True)
     e.add_field(name="\u200b", value="\u200b", inline=False)
     e.add_field(name=f"{E('sd_dice', '🎲')} Удача",
-                value="`/дуэль` — на монеты с игроком\n`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха",
+                value="`/дуэль` — на монеты с игроком\n`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха\n`/класс` · `/навык` — баффы",
                 inline=True)
     e.add_field(name=f"{E('sd_shop', '🛒')} Магазин",
                 value="`/магазин` · `/купить`\n`/инвентарь`\nРоли за монеты",
@@ -431,6 +444,15 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     e.add_field(name="Профессия", value=f"**{job}**")
     e.add_field(name="Зарплата", value=f"{fmt(pay)} в день")
     e.add_field(name="Опыт до следующего уровня", value=f"{have} / {need}", inline=False)
+    c = await get_cls(inter.guild_id, m.id)
+    if c["cls"]:
+        emo, cname, sname, _, _ = CLASSES[c["cls"]]
+        left = c["ready"] - int(time.time())
+        state = "активен" if c["active"] else (f"через {fmt_time(left)}" if left > 0 else "готов")
+        e.add_field(name="Класс", value=f"{emo} **{cname}** · ур. {cls_level(c['xp'])}")
+        e.add_field(name=f"Навык «{sname}»", value=state)
+    else:
+        e.add_field(name="Класс", value="не выбран — `/класс`", inline=False)
     nxt = [(l, n, p) for l, n, p in JOBS if l > lvl]
     if nxt:
         e.add_field(name="Следующая профессия",
@@ -499,7 +521,8 @@ async def rob(inter: discord.Interaction, участник: discord.Member):
         return await reply(inter, 
             "Нужно хотя бы 100 монет в кошельке (на штраф, если поймают)", ephemeral=True)
     await bot.set_field(inter.guild_id, inter.user.id, last_rob=now)
-    if random.random() < ROB_CHANCE:
+    boost = await use_skill(inter.guild_id, inter.user.id, "thief")
+    if random.random() < (thief_chance(boost) if boost else ROB_CHANCE):
         stolen = random.randint(victim["balance"] // 10, victim["balance"] // 3)
         await bot.add(inter.guild_id, участник.id, -stolen)
         await bot.add(inter.guild_id, inter.user.id, stolen)
@@ -552,6 +575,8 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         msg, col = f"Выпал **{result}** — ты выиграл **{fmt(ставка)}**! 🎉", discord.Color.green()
     else:
         msg, col = f"Выпал **{result}** — ты проиграл **{fmt(ставка)}** 😢", discord.Color.red()
+    if result != выбор.value:
+        msg += await gambler_refund(inter, ставка)
     await send_card(inter, embed("🪙 Монетка", msg, col), "coinflip")
 
 
@@ -578,7 +603,167 @@ async def slots(inter: discord.Interaction, ставка: app_commands.Range[int
         text, col = f"Мимо. −**{fmt(ставка)}**", discord.Color.red()
     if win:
         await bot.add(inter.guild_id, inter.user.id, win)
+    if not win:
+        text += await gambler_refund(inter, ставка)
     await send_card(inter, embed("🎰 Слоты", f"## {line}\n{text}", col), "slots")
+
+
+# ═════════ Классы и навыки ═════════
+# класс: (эмодзи, название, навык, кулдаун в секундах, баннер)
+CLASSES = {
+    "thief": ("🦹", "Грабитель", "Отмычка", 24 * 3600, "rob"),
+    "mage": ("🧙", "Маг", "Зелье удачи", 3 * 86400, "shop"),
+    "gambler": ("🎰", "Шулер", "Счастливая фишка", 12 * 3600, "coinflip"),
+}
+CLS_LEVELS = [0, 3, 8, 15, 25]   # сколько раз навык должен сработать для уровней 1-5
+CLS_CHANGE_CD = 7 * 86400        # сменить класс можно раз в неделю
+
+
+def cls_level(uses: int) -> int:
+    return sum(1 for t in CLS_LEVELS if uses >= t)
+
+
+def thief_chance(lvl: int) -> float:
+    return 0.50 + 0.05 * lvl      # 55% ... 75%
+
+
+def mage_mult(lvl: int) -> float:
+    return 1.25 + 0.25 * lvl      # x1.5 ... x2.5
+
+
+def gambler_cap(lvl: int) -> int:
+    return 50 + 150 * lvl         # 200 ... 800
+
+
+def skill_text(cls: str, lvl: int) -> str:
+    if cls == "thief":
+        return f"следующее `/ограбить` — с шансом {round(thief_chance(lvl) * 100)}%"
+    if cls == "mage":
+        return f"следующая зарплата — x{mage_mult(lvl):g}"
+    return f"следующая проигранная ставка в `/монетка` или `/слоты` вернётся (до {gambler_cap(lvl)})"
+
+
+def cls_banner(cls: str) -> str | None:
+    b = getattr(bot, "banners", {})
+    return b.get(f"cls_{cls}") or b.get(CLASSES[cls][4])
+
+
+async def get_cls(guild_id: int, user_id: int) -> dict:
+    await bot.get_user(guild_id, user_id)
+    cur = await bot.db.execute(
+        "SELECT cls,cls_xp,cls_changed,skill_ready,skill_active FROM users "
+        "WHERE guild_id=? AND user_id=?", (guild_id, user_id))
+    r = await cur.fetchone()
+    return {"cls": r[0], "xp": r[1] or 0, "changed": r[2] or 0,
+            "ready": r[3] or 0, "active": r[4] or 0}
+
+
+async def use_skill(guild_id: int, user_id: int, cls: str) -> int:
+    """Если у игрока активен навык этого класса — тратит его и возвращает уровень класса."""
+    c = await get_cls(guild_id, user_id)
+    if c["cls"] != cls or not c["active"]:
+        return 0
+    await bot.db.execute(
+        "UPDATE users SET skill_active=0, skill_ready=?, cls_xp=cls_xp+1 "
+        "WHERE guild_id=? AND user_id=?",
+        (int(time.time()) + CLASSES[cls][3], guild_id, user_id))
+    await bot.db.commit()
+    return cls_level(c["xp"])
+
+
+async def gambler_refund(inter: discord.Interaction, bet: int) -> str:
+    lvl = await use_skill(inter.guild_id, inter.user.id, "gambler")
+    if not lvl:
+        return ""
+    back = min(bet, gambler_cap(lvl))
+    await bot.add(inter.guild_id, inter.user.id, back)
+    return f"\n🎰 Счастливая фишка вернула **{fmt(back)}**"
+
+
+def cls_embed(cls: str, lvl: int, title: str, text: str) -> discord.Embed:
+    e = embed(title, text, discord.Color.from_rgb(209, 53, 57))
+    if cls_banner(cls):
+        e.set_image(url="attachment://card.png")
+    return e
+
+
+class ClassView(discord.ui.View):
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=60)
+        self.owner_id = owner_id
+        for key, (emo, name, _, _, _) in CLASSES.items():
+            btn = discord.ui.Button(label=name, emoji=emo, style=discord.ButtonStyle.primary)
+            btn.callback = self.picker(key)
+            self.add_item(btn)
+
+    async def interaction_check(self, inter: discord.Interaction) -> bool:
+        if inter.user.id != self.owner_id:
+            await inter.response.send_message("Вызови `/класс` сам", ephemeral=True)
+            return False
+        return True
+
+    def picker(self, key: str):
+        async def pick(inter: discord.Interaction):
+            c = await get_cls(inter.guild_id, inter.user.id)
+            now = int(time.time())
+            if c["cls"] == key:
+                return await inter.response.send_message("Это уже твой класс", ephemeral=True)
+            if c["cls"] and now - c["changed"] < CLS_CHANGE_CD:
+                left = fmt_time(CLS_CHANGE_CD - (now - c["changed"]))
+                return await inter.response.send_message(
+                    f"Сменить класс можно через **{left}**", ephemeral=True)
+            await bot.db.execute(
+                "UPDATE users SET cls=?, cls_xp=0, cls_changed=?, skill_ready=0, skill_active=0 "
+                "WHERE guild_id=? AND user_id=?", (key, now, inter.guild_id, inter.user.id))
+            await bot.db.commit()
+            self.stop()
+            emo, name, skill, cd, _ = CLASSES[key]
+            e = cls_embed(key, 1, f"{emo} Класс выбран: {name}",
+                          f"{inter.user.mention} теперь **{name}**.\n"
+                          f"Навык **{skill}**: {skill_text(key, 1)}.\n"
+                          f"Активируй его командой `/навык`. Перезарядка — {fmt_time(cd)}.")
+            path = cls_banner(key)
+            files = [discord.File(path, filename="card.png")] if path else []
+            await inter.response.edit_message(embed=e, view=None, attachments=files)
+        return pick
+
+
+@bot.tree.command(name="класс", description="Выбрать класс: грабитель, маг или шулер")
+async def choose_class(inter: discord.Interaction):
+    lines = []
+    for key, (emo, name, skill, cd, _) in CLASSES.items():
+        lines.append(f"{emo} **{name}** — навык «{skill}»: {skill_text(key, 1)}. "
+                     f"Перезарядка {fmt_time(cd)}.")
+    e = embed("Выбор класса", "\n\n".join(lines) +
+              "\n\nНавык усиливается с уровнем класса (растёт, когда навык срабатывает). "
+              "Сменить класс можно раз в 7 дней, уровень класса при смене сбрасывается.",
+              discord.Color.from_rgb(209, 53, 57))
+    await reply(inter, embed=e, view=ClassView(inter.user.id))
+
+
+@bot.tree.command(name="навык", description="Активировать навык своего класса")
+async def skill(inter: discord.Interaction):
+    c = await get_cls(inter.guild_id, inter.user.id)
+    if not c["cls"]:
+        return await reply(inter, "Сначала выбери класс: `/класс`", ephemeral=True)
+    emo, name, sname, cd, _ = CLASSES[c["cls"]]
+    lvl = cls_level(c["xp"])
+    now = int(time.time())
+    if c["active"]:
+        return await reply(inter, f"Навык **{sname}** уже активен: {skill_text(c['cls'], lvl)}.",
+                           ephemeral=True)
+    if now < c["ready"]:
+        return await reply(inter, f"⏳ Навык **{sname}** перезаряжается ещё **{fmt_time(c['ready'] - now)}**",
+                           ephemeral=True)
+    await bot.set_field(inter.guild_id, inter.user.id, skill_active=1)
+    e = cls_embed(c["cls"], lvl, f"{emo} Навык активирован: {sname}",
+                  f"{inter.user.mention}: {skill_text(c['cls'], lvl)}.\n"
+                  f"Класс: **{name}**, уровень **{lvl}**. Перезарядка начнётся, когда навык сработает.")
+    kw = {}
+    path = cls_banner(c["cls"])
+    if path:
+        kw["file"] = discord.File(path, filename="card.png")
+    await reply(inter, embed=e, **kw)
 
 
 # ═════════ Дуэли ═════════
