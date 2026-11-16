@@ -237,3 +237,83 @@ def build_all(src_path: str, out_dir: str, chars_path: str = "") -> dict:
             make_banner(char, title, sub).save(p, optimize=True)
         paths[key] = p
     return paths
+
+
+# ───────── карточка профиля (HUD) ─────────
+def _fit(d, text, size, room, min_size=7):
+    f = _font(size)
+    while size > min_size and d.textlength(text, font=f) > room:
+        size -= 1
+        f = _font(size)
+    while len(text) > 3 and d.textlength(text, font=f) > room:
+        text = text[:-2].rstrip() + "…"
+    return text, f
+
+
+def profile_card(banner_path, data: dict, avatar: bytes | None = None,
+                 W: int = 1200, H: int = 450) -> bytes:
+    """Картинка профиля: персонаж работы слева, имя, уровень, шкала опыта и статистика."""
+    import io
+    P = 3
+    w, h = W // P, H // P
+    portrait = None
+    if banner_path and os.path.exists(banner_path):
+        b = Image.open(banner_path).convert("RGB")
+        portrait = b.crop((0, 0, 330, b.height)).resize((round(330 * H / b.height), H), Image.LANCZOS)
+    x0 = (portrait.width if portrait else 0) // P
+    lo = Image.new("RGB", (w, h), RED)
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    for x in range(w):
+        md.line([(x, 0), (x, h)], fill=max(0, min(170, (x - x0) * 6)))
+    lo = Image.composite(Image.new("RGB", (w, h), DARK_RED), lo, mask)
+    d = ImageDraw.Draw(lo)
+    d.fontmode = "1"
+
+    def text(xy, s, f, color):
+        d.text((xy[0] + 1, xy[1] + 1), s, font=f, fill=SHADOW)
+        d.text(xy, s, font=f, fill=color)
+
+    tx, right = x0 + 10, w - 10
+    nx = tx
+    if avatar:
+        try:
+            av = Image.open(io.BytesIO(avatar)).convert("RGB").resize((26, 26), Image.LANCZOS)
+            d.rectangle([tx - 1, 7, tx + 26, 34], outline=CREAM)
+            lo.paste(av, (tx, 8))
+            nx = tx + 32
+        except Exception:
+            pass
+    name, f = _fit(d, str(data["name"]).upper(), 14, right - nx, 9)
+    text((nx, 7), name, f, CREAM)
+    title, f = _fit(d, f"{data['title']} • УРОВЕНЬ {data['level']}".upper(), 9, right - nx)
+    text((nx, 25), title, f, RAY)
+
+    have, need = data["have"], max(1, data["need"])
+    f8 = _font(8)
+    text((tx, 42), f"ОПЫТ {have} / {need}", f8, CREAM)
+    pct = f"{have * 100 // need}%"
+    text((right - d.textlength(pct, font=f8), 42), pct, f8, GOLD)
+    d.rectangle([tx, 54, right, 62], fill=SHADOW, outline=CREAM)
+    fill = (right - tx - 2) * min(have, need) // need
+    if fill > 0:
+        d.rectangle([tx + 1, 55, tx + 1 + fill, 61], fill=GOLD)
+
+    col = (right - tx) // 2
+    for i, (label, value) in enumerate(data["cells"][:6]):
+        cx, cy = tx + (i % 2) * col, 71 + (i // 2) * 26
+        lab, f = _fit(d, str(label).upper(), 8, col - 6)
+        text((cx, cy), lab, f, RAY)
+        val, f = _fit(d, str(value).upper(), 11, col - 6, 8)
+        text((cx, cy + 10), val, f, CREAM)
+
+    big = lo.resize((W, H), Image.NEAREST)
+    if portrait:
+        fade = Image.new("L", portrait.size, 255)
+        fd = ImageDraw.Draw(fade)
+        for x in range(portrait.width - 30, portrait.width):
+            fd.line([(x, 0), (x, H)], fill=int(255 * (portrait.width - x) / 30))
+        big.paste(portrait, (0, 0), fade)
+    out = io.BytesIO()
+    big.save(out, "PNG")
+    return out.getvalue()
