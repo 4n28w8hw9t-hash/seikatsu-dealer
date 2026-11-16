@@ -90,14 +90,159 @@ class DeferTree(app_commands.CommandTree):
             await super()._call(interaction)
 
 
-async def reply(inter: discord.Interaction, content=None, **kw):
-    """Ответ, который видит только сам игрок."""
-    if content is not None:
-        kw["content"] = content
-    kw.setdefault("ephemeral", True)
+RED = discord.Color.from_rgb(209, 53, 57)
+V2 = hasattr(discord.ui, "LayoutView")   # новые «широкие» сообщения Discord
+# кнопка: (подпись, запасной эмодзи, своя иконка sd_<имя>, цвет)
+_G, _B, _OK, _R = (discord.ButtonStyle.secondary, discord.ButtonStyle.primary,
+                   discord.ButtonStyle.success, discord.ButtonStyle.danger)
+BUTTONS = {
+    "menu": ("Меню", "◀️", "menu", _G),
+    "profile": ("Профиль", "👤", "profile", _B),
+    "class": ("Работа", "🧰", "work", _B),
+    "skill": ("Навык", "✨", "skill", _B),
+    "balance": ("Баланс", "💰", "coin", _G),
+    "dep": ("Положить", "🏦", "bank", _OK),
+    "wd": ("Снять", "💵", "wd", _OK),
+    "top": ("Топ", "🏆", "top", _G),
+    "coin": ("Монетка", "🪙", "flip", _R),
+    "slots": ("Слоты", "🎰", "slots", _R),
+    "shop": ("Магазин", "🛒", "shop", _G),
+    "buy": ("Купить", "🛍️", "buy", _OK),
+    "inv": ("Инвентарь", "🎒", "inv", _G),
+    "help": ("Помощь", "❓", "help", _G),
+    "job:worker": ("Разнорабочий", "🧰", "work", _G),
+    "job:thief": ("Грабитель", "🦹", "thief", _B),
+    "job:mage": ("Маг", "🧙", "mage", _B),
+    "job:gambler": ("Шулер", "🎰", "gambler", _B),
+}
+NAV = ["menu", "profile", "balance", "shop", "top"]
+
+
+def make_button(key: str) -> discord.ui.Button:
+    label, emo, icon, style = BUTTONS[key]
+    custom = getattr(bot, "emo", {}).get(f"sd_{icon}")
+    if custom:
+        try:
+            emo = discord.PartialEmoji.from_str(custom)
+        except Exception:
+            pass
+    return discord.ui.Button(label=label, emoji=emo, style=style, custom_id=f"sd:{key}")
+
+
+def _file(image) -> discord.File:
+    name, src = image
+    return discord.File(src if isinstance(src, str) else io.BytesIO(src), filename=name)
+
+
+def _embed_text(e: discord.Embed | None, content: str | None) -> str:
+    parts = []
+    if e is not None:
+        if e.title:
+            parts.append(f"## {e.title}")
+        if e.description:
+            parts.append(e.description)
+        short = []
+        for f in e.fields:
+            if f.name == "​":
+                continue
+            if f.inline and "\n" not in f.value:
+                short.append(f"**{f.name}:** {f.value}")
+            else:
+                parts.append(f"### {f.name}\n{f.value}")
+        if short:
+            parts.append("\n".join(short))
+        if e.footer and e.footer.text:
+            parts.append(f"-# {e.footer.text}")
+    if content:
+        parts.append(str(content))
+    return "\n".join(parts)[:3900]
+
+
+def build_page(content=None, embed=None, image=None, rows=None, nav=True):
+    """Широкая карточка: баннер, текст и кнопки внутри одной рамки."""
+    ui = discord.ui
+    items, files = [], []
+    if image:
+        files.append(_file(image))
+        items.append(ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{image[0]}")))
+    text = _embed_text(embed, content)
+    thumb = embed.thumbnail.url if embed is not None and embed.thumbnail else None
+    if text and thumb:
+        items.append(ui.Section(ui.TextDisplay(text), accessory=ui.Thumbnail(thumb)))
+    elif text:
+        items.append(ui.TextDisplay(text))
+    used = set()   # одна и та же кнопка дважды в сообщении запрещена
+    for row in rows or []:
+        if isinstance(row, str):
+            items.append(ui.TextDisplay(row))
+            continue
+        keys = [k for k in row if k not in used]
+        used.update(keys)
+        if keys:
+            items.append(ui.ActionRow(*[make_button(k) for k in keys]))
+    keys = [k for k in NAV if k not in used] if nav else []
+    if keys:
+        items.append(ui.Separator())
+        items.append(ui.ActionRow(*[make_button(k) for k in keys]))
+    color = embed.color if embed is not None and embed.color else RED
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=color))
+    view.stop()  # нажатия ловит on_interaction, хранить сообщение в памяти не нужно
+    return view, files
+
+
+def build_classic(content=None, embed=None, image=None, rows=None, nav=True) -> dict:
+    """Запасной вид (обычный эмбед), если широкие карточки недоступны."""
+    kw = {"content": content, "embed": embed, "attachments": []}
+    if image:
+        kw["attachments"] = [_file(image)]
+        if embed is not None:
+            embed.set_image(url=f"attachment://{image[0]}")
+    view = discord.ui.View(timeout=None)
+    lines = [r for r in (rows or []) if not isinstance(r, str)][:4]
+    if nav:
+        lines.append(NAV)
+    used = set()
+    for i, row in enumerate(lines[:5]):
+        for k in row[:5]:
+            if k in used:
+                continue
+            used.add(k)
+            b = make_button(k)
+            b.row = i
+            view.add_item(b)
+    view.stop()
+    kw["view"] = view
+    return kw
+
+
+async def _deliver(inter: discord.Interaction, kw: dict, ephemeral: bool):
+    if inter.extras.get("sd_edit"):  # меняем то же сообщение, где нажали кнопку
+        msg = inter.message
+        if "embed" not in kw and not (msg and msg.flags.components_v2):
+            kw["content"], kw["embeds"] = None, []   # старое сообщение было обычным эмбедом
+        return await inter.edit_original_response(**kw)
+    files = kw.pop("attachments", [])
+    kw = {k: v for k, v in kw.items() if v is not None}
+    if files:
+        kw["files"] = files
     if inter.response.is_done():
-        return await inter.followup.send(**kw)
-    return await inter.response.send_message(**kw)
+        return await inter.followup.send(ephemeral=ephemeral, **kw)
+    return await inter.response.send_message(ephemeral=ephemeral, **kw)
+
+
+async def reply(inter: discord.Interaction, content=None, *, embed=None, image=None,
+                rows=None, nav=True, ephemeral=True, allowed_mentions=None):
+    """Ответ, который видит только сам игрок. Кнопки ведут на другие страницы."""
+    extra = {"allowed_mentions": allowed_mentions} if allowed_mentions is not None else {}
+    if V2:
+        try:
+            view, files = build_page(content, embed, image, rows, nav)
+            return await _deliver(inter, {"view": view, "attachments": files, **extra}, ephemeral)
+        except Exception as ex:
+            print("Карточка не отправлена, пробую обычный вид:", repr(ex))
+    kw = build_classic(content, embed, image, rows, nav)
+    return await _deliver(inter, {**kw, **extra}, ephemeral)
 
 
 def E(name: str, fallback: str = "") -> str:
@@ -107,8 +252,7 @@ def E(name: str, fallback: str = "") -> str:
 async def send_card(inter: discord.Interaction, e: discord.Embed, key: str, **kw):
     path = getattr(bot, "banners", {}).get(key)
     if path and os.path.exists(path):
-        e.set_image(url="attachment://card.png")
-        kw["file"] = discord.File(path, filename="card.png")
+        kw["image"] = ("card.png", path)
     return await reply(inter, embed=e, **kw)
 
 
@@ -172,7 +316,6 @@ class EconomyBot(commands.Bot):
                 pass
         await self.db.commit()
         tick.start()
-        self.add_view(MenuView())  # кнопки панели работают и после перезапуска
 
         try:  # баннеры команд (рисуются один раз и лежат в data/)
             self.banners = await asyncio.to_thread(
@@ -194,6 +337,24 @@ class EconomyBot(commands.Bot):
                     art.emoji_png(name).save(buf, "PNG")
                     have[name] = await self.create_application_emoji(name=name, image=buf.getvalue())
             self.emo = {n: str(em) for n, em in have.items()}
+            icons = os.path.join(os.path.dirname(BANNER_PATH), "icons")
+            if os.path.isdir(icons):  # свои иконки: icons/<имя>.png заменяют нарисованные
+                import zlib
+                for fn in sorted(os.listdir(icons)):
+                    if not fn.endswith(".png"):
+                        continue
+                    with open(os.path.join(icons, fn), "rb") as f:
+                        raw = f.read()
+                    base = f"sdx_{fn[:-4]}_"
+                    name = f"{base}{zlib.crc32(raw) % 100000}"
+                    try:
+                        for old in [em for n, em in have.items() if n.startswith(base) and n != name]:
+                            await old.delete()
+                        if name not in have:
+                            have[name] = await self.create_application_emoji(name=name, image=raw)
+                        self.emo[f"sd_{fn[:-4]}"] = str(have[name])
+                    except Exception as ex:
+                        print("Иконка не загружена:", fn, repr(ex))
         except Exception as ex:
             print("Эмодзи не загружены:", ex)
             self.emo = {}
@@ -421,29 +582,26 @@ async def _tick_wait():
 @bot.tree.command(name="помощь", description="Что умеет Seikatsu Dealer")
 async def help_cmd(inter: discord.Interaction):
     e = discord.Embed(
-        title="🃏 Seikatsu Dealer",
-        description=("Банкир и крупье сервера **Seikatsu**.\n"
-                     "Зарабатывай, копи, рискуй и трать — все монеты проходят через меня.\n"
-                     "**`/меню`** — все действия кнопками, ответы видишь только ты."),
-        color=discord.Color.from_rgb(209, 53, 57),
+        title="Seikatsu Dealer",
+        description=("Банкир и крупье сервера **Seikatsu**. Зарабатывай, копи, рискуй и трать — "
+                     "все монеты проходят через меня.\n"
+                     "Всё делается кнопками, ответы видишь только ты."),
+        color=RED,
     )
-    e.add_field(name=f"{E('sd_gift', '💰')} Заработок",
-                value="Зарплата каждый день в 03:00 МСК\nОпыт за чат и голосовые\n`/профиль` · `/работа`",
-                inline=True)
-    e.add_field(name=f"{E('sd_bank', '🏦')} Деньги",
-                value="`/баланс` · `/перевод`\n`/положить` · `/снять`\nБанк защищает от кражи",
-                inline=True)
-    e.add_field(name="\u200b", value="\u200b", inline=False)
-    e.add_field(name=f"{E('sd_dice', '🎲')} Удача",
-                value="`/дуэль` — на монеты с игроком\n`/монетка` — x2\n`/слоты` — до x30\n`/ограбить` — 40% успеха\n`/работа` · `/навык` — баффы",
-                inline=True)
-    e.add_field(name=f"{E('sd_shop', '🛒')} Магазин",
-                value="`/магазин` · `/купить`\n`/инвентарь`\nРоли за монеты",
-                inline=True)
-    e.add_field(name=f"{E('sd_top', '🏆')} Рейтинг", value="`/топ` — самые богатые", inline=False)
+    e.add_field(name=f"{E('sd_gift', '💰')} Заработок", inline=False,
+                value="Зарплата приходит сама каждый день в **03:00 МСК**.\n"
+                      "Опыт за чат и голосовые поднимает уровень и должность.\n"
+                      "`/профиль` · `/работа` · `/навык`")
+    e.add_field(name=f"{E('sd_bank', '🏦')} Деньги", inline=False,
+                value="`/баланс` · `/положить` · `/снять` · `/перевод`\n"
+                      "Монеты в банке нельзя украсть.")
+    e.add_field(name=f"{E('sd_dice', '🎲')} Удача", inline=False,
+                value="`/монетка` — x2 · `/слоты` — до x30\n"
+                      "`/дуэль` — на монеты с игроком · `/ограбить` — 40% успеха")
+    e.add_field(name=f"{E('sd_shop', '🛒')} Магазин", inline=False,
+                value="`/магазин` · `/купить` · `/инвентарь` — роли за монеты")
+    e.add_field(name=f"{E('sd_top', '🏆')} Рейтинг", inline=False, value="`/топ` — самые богатые")
     e.set_footer(text="Админам: /эко — управление экономикой и магазином")
-    if bot.user:
-        e.set_thumbnail(url=bot.user.display_avatar.url)
     await send_card(inter, e, "help")
 
 
@@ -458,7 +616,7 @@ async def balance(inter: discord.Interaction, участник: discord.Member |
     e.add_field(name="Банк", value=fmt(u["bank"]))
     e.add_field(name="Всего", value=fmt(u["balance"] + u["bank"]))
     e.set_thumbnail(url=m.display_avatar.url)
-    await send_card(inter, e, "balance")
+    await send_card(inter, e, "balance", rows=[["dep", "wd"]])
 
 
 def job_title(lvl: int, spec: str | None) -> str:
@@ -506,14 +664,14 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     try:
         png = await asyncio.to_thread(
             art.profile_card, banners.get(key) or banners.get("work"), data, avatar)
-        return await reply(inter, file=discord.File(io.BytesIO(png), filename="profile.png"))
+        return await reply(inter, image=("profile.png", png), rows=[["class", "skill"]])
     except Exception as ex:
         print("Карточка профиля не нарисована:", repr(ex))
     e = embed(f"Профиль {m.display_name}",
               f"**{data['title']}** · уровень **{lvl}**\nОпыт: {have} / {need}")
     for n, v in data["cells"]:
         e.add_field(name=n, value=v)
-    await reply(inter, embed=e)
+    await reply(inter, embed=e, rows=[["class", "skill"]])
 
 
 @bot.tree.command(name="перевод", description="Перевести монеты другому участнику")
@@ -540,7 +698,7 @@ async def deposit(inter: discord.Interaction, сумма: app_commands.Range[int
         return await reply(inter, "Недостаточно монет", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, -amount)
     await bot.add(inter.guild_id, inter.user.id, amount, "bank")
-    await reply(inter, f"🏦 Положил в банк **{fmt(amount)}**")
+    await reply(inter, f"🏦 Положил в банк **{fmt(amount)}**", rows=[["dep", "wd"]])
 
 
 @bot.tree.command(name="снять", description="Снять монеты из банка")
@@ -552,7 +710,7 @@ async def withdraw(inter: discord.Interaction, сумма: app_commands.Range[in
         return await reply(inter, "В банке столько нет", ephemeral=True)
     await bot.add(inter.guild_id, inter.user.id, amount)
     await bot.add(inter.guild_id, inter.user.id, -amount, "bank")
-    await reply(inter, f"🏦 Снял из банка **{fmt(amount)}**")
+    await reply(inter, f"🏦 Снял из банка **{fmt(amount)}**", rows=[["dep", "wd"]])
 
 
 @bot.tree.command(name="ограбить", description="Попробовать украсть монеты из кошелька")
@@ -607,7 +765,7 @@ async def top(inter: discord.Interaction):
 async def take_bet(inter: discord.Interaction, bet: int) -> bool:
     u = await bot.get_user(inter.guild_id, inter.user.id)
     if u["balance"] < bet:
-        await reply(inter, "Недостаточно монет для ставки", ephemeral=True)
+        await reply(inter, "Недостаточно монет для ставки", rows=[["coin", "slots"]])
         return False
     await bot.add(inter.guild_id, inter.user.id, -bet)
     return True
@@ -629,7 +787,7 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         msg, col = f"Выпал **{result}** — ты проиграл **{fmt(ставка)}** 😢", discord.Color.red()
     if result != выбор.value:
         msg += await gambler_refund(inter, ставка)
-    await send_card(inter, embed("🪙 Монетка", msg, col), "coinflip")
+    await send_card(inter, embed("🪙 Монетка", msg, col), "coinflip", rows=[["coin", "slots"]])
 
 
 SLOTS = ["🍒", "🍋", "🍇", "🔔", "💎", "7️⃣"]
@@ -657,7 +815,7 @@ async def slots(inter: discord.Interaction, ставка: app_commands.Range[int
         await bot.add(inter.guild_id, inter.user.id, win)
     if not win:
         text += await gambler_refund(inter, ставка)
-    await send_card(inter, embed("🎰 Слоты", f"## {line}\n{text}", col), "slots")
+    await send_card(inter, embed("🎰 Слоты", f"# {line}\n{text}", col), "slots", rows=[["slots", "coin"]])
 
 
 # ═════════ Классы и навыки ═════════
@@ -733,60 +891,37 @@ async def gambler_refund(inter: discord.Interaction, bet: int) -> str:
 
 
 def cls_embed(cls: str, lvl: int, title: str, text: str) -> discord.Embed:
-    e = embed(title, text, discord.Color.from_rgb(209, 53, 57))
-    if cls_banner(cls):
-        e.set_image(url="attachment://card.png")
-    return e
+    return embed(title, text, RED)
 
 
-class ClassView(discord.ui.View):
-    def __init__(self, owner_id: int):
-        super().__init__(timeout=60)
-        self.owner_id = owner_id
-        btn = discord.ui.Button(label="Разнорабочий", emoji="🧰", style=discord.ButtonStyle.secondary)
-        btn.callback = self.picker(None)
-        self.add_item(btn)
-        for key, (emo, name, _, _, _) in CLASSES.items():
-            btn = discord.ui.Button(label=name, emoji=emo, style=discord.ButtonStyle.primary)
-            btn.callback = self.picker(key)
-            self.add_item(btn)
+def cls_image(cls: str):
+    path = cls_banner(cls)
+    return ("card.png", path) if path and os.path.exists(path) else None
 
-    async def interaction_check(self, inter: discord.Interaction) -> bool:
-        if inter.user.id != self.owner_id:
-            await inter.response.send_message("Вызови `/работа` сам", ephemeral=True)
-            return False
-        return True
 
-    def picker(self, key: str | None):
-        async def pick(inter: discord.Interaction):
-            c = await get_cls(inter.guild_id, inter.user.id)
-            now = int(time.time())
-            if c["cls"] == key:
-                return await inter.response.send_message("Это уже твоя работа", ephemeral=True)
-            if c["changed"] and now - c["changed"] < CLS_CHANGE_CD:
-                left = fmt_time(CLS_CHANGE_CD - (now - c["changed"]))
-                return await inter.response.send_message(
-                    f"Сменить работу можно через **{left}**", ephemeral=True)
-            await bot.db.execute(
-                "UPDATE users SET cls=?, cls_xp=0, cls_changed=?, skill_ready=0, skill_active=0 "
-                "WHERE guild_id=? AND user_id=?", (key, now, inter.guild_id, inter.user.id))
-            await bot.db.commit()
-            self.stop()
-            if key is None:
-                lvl = level_of(await get_xp(inter.guild_id, inter.user.id))
-                e = embed("🧰 Ты снова на рабочей карьере",
-                          f"Должность: **{job_of(lvl)[0]}**.\n"
-                          f"Бонус: +{round((WORKER_XP_BONUS - 1) * 100)}% опыта за чат и голосовые.",
-                          discord.Color.from_rgb(209, 53, 57))
-                return await inter.response.edit_message(embed=e, view=None, attachments=[])
-            emo, name, skill, cd, _ = CLASSES[key]
-            e = cls_embed(key, 1, f"{emo} Теперь ты {name}",
-                          f"Навык **{skill}**: {skill_text(key, 1)}.\n"
-                          f"Активируй его командой `/навык`. Перезарядка — {fmt_time(cd)}.")
-            path = cls_banner(key)
-            files = [discord.File(path, filename="card.png")] if path else []
-            await inter.response.edit_message(embed=e, view=None, attachments=files)
-        return pick
+async def pick_job(inter: discord.Interaction, key: str | None):
+    c = await get_cls(inter.guild_id, inter.user.id)
+    now = int(time.time())
+    if c["cls"] == key:
+        return await reply(inter, "Это уже твоя работа", rows=[["class"]])
+    if c["changed"] and now - c["changed"] < CLS_CHANGE_CD:
+        left = fmt_time(CLS_CHANGE_CD - (now - c["changed"]))
+        return await reply(inter, f"Сменить работу можно через **{left}**")
+    await bot.db.execute(
+        "UPDATE users SET cls=?, cls_xp=0, cls_changed=?, skill_ready=0, skill_active=0 "
+        "WHERE guild_id=? AND user_id=?", (key, now, inter.guild_id, inter.user.id))
+    await bot.db.commit()
+    if key is None:
+        lvl = level_of(await get_xp(inter.guild_id, inter.user.id))
+        e = embed("🧰 Ты снова на рабочей карьере",
+                  f"Должность: **{job_of(lvl)[0]}**.\n"
+                  f"Бонус: +{round((WORKER_XP_BONUS - 1) * 100)}% опыта за чат и голосовые.", RED)
+        return await send_card(inter, e, "work")
+    emo, name, skill_name, cd, _ = CLASSES[key]
+    e = cls_embed(key, 1, f"{emo} Теперь ты {name}",
+                  f"Навык **{skill_name}**: {skill_text(key, 1)}.\n"
+                  f"Перезарядка — {fmt_time(cd)}.")
+    await reply(inter, embed=e, image=cls_image(key), rows=[["skill"]])
 
 
 @bot.tree.command(name="работа", description="Выбрать работу: разнорабочий, грабитель, маг или шулер")
@@ -794,15 +929,15 @@ async def choose_class(inter: discord.Interaction):
     lines = [f"🧰 **Разнорабочий** (по умолчанию) — карьера по уровню: "
              f"{' → '.join(j[1] for j in JOBS)}. "
              f"Бонус: +{round((WORKER_XP_BONUS - 1) * 100)}% опыта, постоянно."]
-    for key, (emo, name, skill, cd, _) in CLASSES.items():
-        lines.append(f"{emo} **{name}** — навык «{skill}»: {skill_text(key, 1)}. "
+    for key, (emo, name, skill_name, cd, _) in CLASSES.items():
+        lines.append(f"{emo} **{name}** — навык «{skill_name}»: {skill_text(key, 1)}. "
                      f"Перезарядка {fmt_time(cd)}.")
     e = embed("Выбор работы", "\n\n".join(lines) +
               "\n\nЗарплата у всех зависит от уровня. Навык специальности усиливается, "
               "когда срабатывает. Сменить работу можно раз в 7 дней, "
-              "уровень специальности при смене сбрасывается.",
-              discord.Color.from_rgb(209, 53, 57))
-    await reply(inter, embed=e, view=ClassView(inter.user.id))
+              "уровень специальности при смене сбрасывается.", RED)
+    await send_card(inter, e, "work",
+                    rows=[["job:worker", "job:thief", "job:mage", "job:gambler"]])
 
 
 @bot.tree.command(name="навык", description="Активировать навык своей специальности")
@@ -812,7 +947,7 @@ async def skill(inter: discord.Interaction):
         return await reply(
             inter, f"Ты на рабочей карьере: бонус пассивный, "
                    f"+{round((WORKER_XP_BONUS - 1) * 100)}% опыта за чат и голосовые. "
-                   "Специальность с навыком можно выбрать в `/работа`.")
+                   "Специальность с навыком можно выбрать в «Работа».", rows=[["class"]])
     emo, name, sname, cd, _ = CLASSES[c["cls"]]
     lvl = cls_level(c["xp"])
     now = int(time.time())
@@ -826,11 +961,7 @@ async def skill(inter: discord.Interaction):
                   f"{skill_text(c['cls'], lvl).capitalize()}.\n"
                   f"**{name}**, уровень специальности **{lvl}**. "
                   "Перезарядка начнётся, когда навык сработает.")
-    kw = {}
-    path = cls_banner(c["cls"])
-    if path:
-        kw["file"] = discord.File(path, filename="card.png")
-    await reply(inter, embed=e, **kw)
+    await reply(inter, embed=e, image=cls_image(c["cls"]))
 
 
 # ═════════ Дуэли ═════════
@@ -914,11 +1045,11 @@ async def shop(inter: discord.Interaction):
         "SELECT id,name,price,description,role_id FROM shop WHERE guild_id=? ORDER BY price",
         (inter.guild_id,))
     rows = await cur.fetchall()
-    e = embed("🛒 Магазин", "Купить: `/купить номер`" if rows else "Магазин пока пуст")
+    e = embed("🛒 Магазин", "Жми «Купить» и введи номер товара" if rows else "Магазин пока пуст")
     for i, name, price, desc, role_id in rows:
         extra = f"\nРоль: <@&{role_id}>" if role_id else ""
         e.add_field(name=f"#{i} · {name} — {fmt(price)}", value=(desc or "—") + extra, inline=False)
-    await send_card(inter, e, "shop")
+    await send_card(inter, e, "shop", rows=[["buy", "inv"]])
 
 
 @bot.tree.command(name="купить", description="Купить товар")
@@ -952,7 +1083,7 @@ async def buy(inter: discord.Interaction, номер: int):
         "ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET qty=qty+1",
         (inter.guild_id, inter.user.id, номер))
     await bot.db.commit()
-    await reply(inter, f"🛍️ Ты купил **{name}** за **{fmt(price)}**")
+    await reply(inter, f"🛍️ Ты купил **{name}** за **{fmt(price)}**", rows=[["buy", "inv"]])
 
 
 @bot.tree.command(name="инвентарь", description="Твои покупки")
@@ -964,24 +1095,28 @@ async def inventory(inter: discord.Interaction, участник: discord.Member
         "WHERE i.guild_id=? AND i.user_id=? AND i.qty>0", (inter.guild_id, m.id))
     rows = await cur.fetchall()
     text = "\n".join(f"• {n} ×{q}" for n, q in rows) or "Пусто"
-    await reply(inter, embed=embed(f"🎒 Инвентарь {m.display_name}", text))
+    await reply(inter, embed=embed(f"🎒 Инвентарь {m.display_name}", text), rows=[["shop", "buy"]])
 
 
 # ═════════ Меню ═════════
-MENU_BUTTONS = [  # (ключ, подпись, эмодзи, ряд)
-    ("profile", "Профиль", "👤", 0), ("balance", "Баланс", "💰", 0),
-    ("top", "Топ", "🏆", 0), ("help", "Помощь", "❓", 0),
-    ("coin", "Монетка", "🪙", 1), ("slots", "Слоты", "🎰", 1),
-    ("skill", "Навык", "✨", 1), ("class", "Работа", "🧰", 1),
-    ("dep", "Положить", "🏦", 2), ("wd", "Снять", "💵", 2),
-    ("shop", "Магазин", "🛒", 2), ("inv", "Инвентарь", "🎒", 2),
+MENU_ROWS = [
+    "### Персонаж", ["profile", "class", "skill"],
+    "### Деньги", ["balance", "dep", "wd", "top"],
+    "### Игры", ["coin", "slots"],
+    "### Магазин", ["shop", "buy", "inv", "help"],
 ]
-MENU_MODALS = {"coin": "Монетка", "slots": "Слоты",
-               "dep": "Положить в банк (0 = всё)", "wd": "Снять из банка (0 = всё)"}
+# окно с вводом: (заголовок, подпись поля, подсказка)
+MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"),
+               "slots": ("Слоты", "Ставка", "например 100"),
+               "dep": ("Положить в банк", "Сумма (0 = всё)", "например 100"),
+               "wd": ("Снять из банка", "Сумма (0 = всё)", "например 100"),
+               "buy": ("Купить товар", "Номер товара из магазина", "например 1")}
 
 
 async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
-    if key == "profile":
+    if key == "menu":
+        await reply(inter, **menu_page())
+    elif key == "profile":
         await profile.callback(inter, None)
     elif key == "balance":
         await balance.callback(inter, None)
@@ -993,28 +1128,58 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await skill.callback(inter)
     elif key == "class":
         await choose_class.callback(inter)
+    elif key.startswith("job:"):
+        job = key[4:]
+        if job == "worker" or job in CLASSES:
+            await pick_job(inter, None if job == "worker" else job)
     elif key == "shop":
         await shop.callback(inter)
     elif key == "inv":
         await inventory.callback(inter, None)
+    elif key == "buy":
+        await buy.callback(inter, n)
     elif key == "dep":
         await deposit.callback(inter, n)
     elif key == "wd":
         await withdraw.callback(inter, n)
     elif key in ("coin", "slots"):
         if n < 10:
-            return await reply(inter, "Минимальная ставка — 10")
+            return await reply(inter, "Минимальная ставка — 10", rows=[["coin", "slots"]])
         if key == "slots":
             return await slots.callback(inter, n)
         s = "решка" if side.strip().lower().startswith("р") else "орёл"
         await coinflip.callback(inter, n, app_commands.Choice(name=s, value=s))
 
 
+async def begin(inter: discord.Interaction):
+    """Нажатие в личном сообщении меняет его же; в общей панели — открывает личное."""
+    own = inter.message is not None and inter.message.flags.ephemeral
+    if own:
+        await inter.response.defer()
+        inter.extras["sd_edit"] = True
+    else:
+        await inter.response.defer(ephemeral=True, thinking=True)
+
+
+async def run_action(inter: discord.Interaction, key: str, n: int = 0, side: str = ""):
+    try:
+        await begin(inter)
+        async with ECON_LOCK:
+            await menu_action(key, inter, n, side)
+    except Exception as ex:
+        print("Ошибка кнопки:", key, repr(ex))
+        try:
+            await reply(inter, "Что-то пошло не так, попробуй ещё раз")
+        except Exception:
+            pass
+
+
 class AmountModal(discord.ui.Modal):
     def __init__(self, key: str):
-        super().__init__(title=MENU_MODALS[key])
+        title, label, hint = MENU_MODALS[key]
+        super().__init__(title=title)
         self.key = key
-        self.amount = discord.ui.TextInput(label="Сумма", placeholder="например 100", max_length=9)
+        self.amount = discord.ui.TextInput(label=label, placeholder=hint, max_length=9)
         self.add_item(self.amount)
         self.side = None
         if key == "coin":
@@ -1025,52 +1190,49 @@ class AmountModal(discord.ui.Modal):
         raw = self.amount.value.strip()
         if not raw.isdigit():
             return await inter.response.send_message("Нужно целое число", ephemeral=True)
-        await inter.response.defer(ephemeral=True, thinking=True)
-        async with ECON_LOCK:
-            await menu_action(self.key, inter, int(raw), self.side.value if self.side else "")
+        await run_action(inter, self.key, int(raw), self.side.value if self.side else "")
 
 
-class MenuView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        for key, label, emo, row in MENU_BUTTONS:
-            btn = discord.ui.Button(label=label, emoji=emo, row=row, custom_id=f"sd:{key}",
-                                    style=discord.ButtonStyle.secondary)
-            btn.callback = self.handler(key)
-            self.add_item(btn)
+@bot.event
+async def on_interaction(inter: discord.Interaction):
+    """Все кнопки бота (sd:...) — работают и после перезапуска."""
+    if inter.type is not discord.InteractionType.component:
+        return
+    cid = str((inter.data or {}).get("custom_id", ""))
+    if not cid.startswith("sd:"):
+        return
+    key = cid[3:]
+    if key not in BUTTONS:
+        return
+    try:
+        if too_fast(inter.user.id):
+            return await inter.response.send_message(
+                "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
+        if key in MENU_MODALS:
+            return await inter.response.send_modal(AmountModal(key))
+    except discord.HTTPException as ex:
+        return print("Ошибка кнопки:", key, repr(ex))
+    await run_action(inter, key)
 
-    def handler(self, key: str):
-        async def run(inter: discord.Interaction):
-            if too_fast(inter.user.id):
-                return await inter.response.send_message(
-                    "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
-            if key in MENU_MODALS:
-                return await inter.response.send_modal(AmountModal(key))
-            await inter.response.defer(ephemeral=True, thinking=True)
-            async with ECON_LOCK:
-                await menu_action(key, inter)
-        return run
 
-
-def menu_message() -> dict:
+def menu_page() -> dict:
     e = discord.Embed(
-        title="🃏 Seikatsu Dealer — меню",
-        description=("Жми кнопки — ответ увидишь только ты, чат не засоряется.\n"
-                     "Командами остались только действия с другим игроком: "
-                     "`/дуэль`, `/ограбить`, `/перевод`, а ещё `/купить`."),
-        color=discord.Color.from_rgb(209, 53, 57))
-    kw = {"embed": e, "view": MenuView()}
+        title="Seikatsu Dealer — меню",
+        description=("Жми кнопки — всё открывается здесь же и видно только тебе.\n"
+                     "-# Командами остались действия с другим игроком: "
+                     "`/дуэль`, `/ограбить`, `/перевод`."),
+        color=RED)
+    kw = {"embed": e, "rows": MENU_ROWS, "nav": False}
     b = getattr(bot, "banners", {})
     path = b.get("menu") or b.get("help")
     if path and os.path.exists(path):
-        e.set_image(url="attachment://card.png")
-        kw["file"] = discord.File(path, filename="card.png")
+        kw["image"] = ("card.png", path)
     return kw
 
 
 @bot.tree.command(name="меню", description="Все действия кнопками")
 async def menu(inter: discord.Interaction):
-    await reply(inter, **menu_message())
+    await reply(inter, **menu_page())
 
 
 # ═════════ Админ-команды ═════════
@@ -1124,7 +1286,19 @@ async def a_del_item(inter: discord.Interaction, номер: int):
 @admin.command(name="панель", description="Поставить в этот канал постоянное меню с кнопками")
 async def a_panel(inter: discord.Interaction):
     try:
-        await inter.channel.send(**menu_message())
+        sent = False
+        if V2:
+            try:
+                view, files = build_page(**menu_page())
+                await inter.channel.send(view=view, files=files)
+                sent = True
+            except discord.Forbidden:
+                raise
+            except Exception as ex:
+                print("Панель в новом виде не отправлена:", repr(ex))
+        if not sent:
+            kw = build_classic(**menu_page())
+            await inter.channel.send(embed=kw["embed"], files=kw["attachments"], view=kw["view"])
     except discord.HTTPException:
         return await reply(inter, "Не могу написать в этот канал — у бота нет прав")
     await reply(inter, "✅ Панель поставлена. Закрепи сообщение, чтобы оно не уезжало.")
@@ -1139,7 +1313,7 @@ async def on_app_error(inter: discord.Interaction, error: app_commands.AppComman
         else f"Ошибка: {error}"
     print("Ошибка команды:", repr(error))
     try:
-        await reply(inter, msg, ephemeral=True)
+        await reply(inter, msg)
     except discord.HTTPException:
         pass
 
