@@ -173,6 +173,9 @@ def build_page(content=None, embed=None, image=None, rows=None, nav=True):
         items.append(ui.TextDisplay(text))
     used = set()   # одна и та же кнопка дважды в сообщении запрещена
     for row in rows or []:
+        if row == "---":
+            items.append(ui.Separator(spacing=discord.SeparatorSpacing.large))
+            continue
         if isinstance(row, str):
             items.append(ui.TextDisplay(row))
             continue
@@ -1100,10 +1103,10 @@ async def inventory(inter: discord.Interaction, участник: discord.Member
 
 # ═════════ Меню ═════════
 MENU_ROWS = [
-    "### Персонаж", ["profile", "class", "skill"],
-    "### Деньги", ["balance", "dep", "wd", "top"],
-    "### Игры", ["coin", "slots"],
-    "### Магазин", ["shop", "buy", "inv", "help"],
+    "---", "### Персонаж", ["profile", "class", "skill"],
+    "---", "### Деньги", ["balance", "dep", "wd", "top"],
+    "---", "### Игры", ["coin", "slots"],
+    "---", "### Магазин", ["shop", "buy", "inv", "help"],
 ]
 # окно с вводом: (заголовок, подпись поля, подсказка)
 MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"),
