@@ -62,21 +62,39 @@ def fmt_time(sec: int) -> str:
     return " ".join(parts) or "0 сек"
 
 
+ECON_LOCK = asyncio.Lock()   # операции с монетами идут строго по одной — защита от дюпа
+LAST_CMD: dict[int, float] = {}
+CMD_GAP = 1.5                # минимальная пауза между действиями одного игрока, сек
+
+
+def too_fast(user_id: int) -> bool:
+    now = time.time()
+    if now - LAST_CMD.get(user_id, 0) < CMD_GAP:
+        return True
+    LAST_CMD[user_id] = now
+    return False
+
+
 class DeferTree(app_commands.CommandTree):
-    """Сразу подтверждаем команду, чтобы Discord не ждал дольше 3 секунд."""
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.type == discord.InteractionType.application_command \
-                and not interaction.response.is_done():
+    """Антиспам, мгновенное личное подтверждение и очередь для операций с монетами."""
+    async def _call(self, interaction: discord.Interaction):
+        if interaction.type == discord.InteractionType.application_command:
             try:
-                await interaction.response.defer(thinking=True)
+                if too_fast(interaction.user.id):
+                    return await interaction.response.send_message(
+                        "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
+                await interaction.response.defer(ephemeral=True, thinking=True)
             except discord.HTTPException:
                 pass
-        return True
+        async with ECON_LOCK:
+            await super()._call(interaction)
 
 
 async def reply(inter: discord.Interaction, content=None, **kw):
+    """Ответ, который видит только сам игрок."""
     if content is not None:
         kw["content"] = content
+    kw.setdefault("ephemeral", True)
     if inter.response.is_done():
         return await inter.followup.send(**kw)
     return await inter.response.send_message(**kw)
@@ -92,6 +110,24 @@ async def send_card(inter: discord.Interaction, e: discord.Embed, key: str, **kw
         e.set_image(url="attachment://card.png")
         kw["file"] = discord.File(path, filename="card.png")
     return await reply(inter, embed=e, **kw)
+
+
+async def send_public(inter: discord.Interaction, e: discord.Embed, key: str, **kw):
+    """Сообщение, которое видят все (дуэли и ограбления)."""
+    path = getattr(bot, "banners", {}).get(key)
+    if path and os.path.exists(path):
+        e.set_image(url="attachment://card.png")
+        kw["file"] = discord.File(path, filename="card.png")
+    try:
+        msg = await inter.channel.send(embed=e, **kw)
+    except discord.HTTPException:
+        await reply(inter, "Не могу написать в этот канал — у бота нет прав")
+        return None
+    try:
+        await inter.delete_original_response()
+    except discord.HTTPException:
+        pass
+    return msg
 
 
 class EconomyBot(commands.Bot):
@@ -128,13 +164,15 @@ class EconomyBot(commands.Bot):
         except Exception:
             pass  # колонка уже есть
         for col in ("cls TEXT", "cls_xp INTEGER DEFAULT 0", "cls_changed INTEGER DEFAULT 0",
-                    "skill_ready INTEGER DEFAULT 0", "skill_active INTEGER DEFAULT 0"):
+                    "skill_ready INTEGER DEFAULT 0", "skill_active INTEGER DEFAULT 0",
+                    "msgs INTEGER DEFAULT 0", "voice_min INTEGER DEFAULT 0"):
             try:
                 await self.db.execute(f"ALTER TABLE users ADD COLUMN {col}")
             except Exception:
                 pass
         await self.db.commit()
         tick.start()
+        self.add_view(MenuView())  # кнопки панели работают и после перезапуска
 
         try:  # баннеры команд (рисуются один раз и лежат в data/)
             self.banners = await asyncio.to_thread(
@@ -303,6 +341,7 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
     key = (message.guild.id, message.author.id)
+    await bot.add(*key, 1, "msgs")
     now = time.time()
     if now - bot.msg_cd.get(key, 0) < MSG_COOLDOWN:
         return
@@ -333,23 +372,6 @@ async def pay_salaries(today: str):
             "UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=?", (pay, g, u))
         count[g] = count.get(g, 0) + 1
     await bot.db.commit()
-    for g, n in count.items():
-        guild = bot.get_guild(g)
-        ch = welcome_channel(guild) if guild else None
-        if ch is None:
-            continue
-        e = embed("💰 Зарплата выплачена",
-                  f"Монеты получили участники: **{n}**.\n"
-                  "Чем выше уровень, тем выше профессия и доход — `/профиль`")
-        kw = {}
-        path = getattr(bot, "banners", {}).get("daily")
-        if path and os.path.exists(path):
-            e.set_image(url="attachment://card.png")
-            kw["file"] = discord.File(path, filename="card.png")
-        try:
-            await ch.send(embed=e, **kw)
-        except discord.HTTPException:
-            pass
 
 
 @tasks.loop(minutes=1)
@@ -368,6 +390,7 @@ async def tick():
                 if len(ids) >= 2:  # в одиночку опыт не идёт
                     for uid in ids:
                         await add_xp(guild.id, uid, XP_VOICE)
+                        await bot.add(guild.id, uid, 1, "voice_min")
         now = datetime.now(MSK)
         today = now.strftime("%Y-%m-%d")
         cur = await bot.db.execute("SELECT value FROM meta WHERE key='last_pay'")
@@ -394,7 +417,8 @@ async def help_cmd(inter: discord.Interaction):
     e = discord.Embed(
         title="🃏 Seikatsu Dealer",
         description=("Банкир и крупье сервера **Seikatsu**.\n"
-                     "Зарабатывай, копи, рискуй и трать — все монеты проходят через меня."),
+                     "Зарабатывай, копи, рискуй и трать — все монеты проходят через меня.\n"
+                     "**`/меню`** — все действия кнопками, ответы видишь только ты."),
         color=discord.Color.from_rgb(209, 53, 57),
     )
     e.add_field(name=f"{E('sd_gift', '💰')} Заработок",
@@ -443,7 +467,15 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     e.add_field(name="Уровень", value=f"**{lvl}**")
     e.add_field(name="Профессия", value=f"**{job}**")
     e.add_field(name="Зарплата", value=f"{fmt(pay)} в день")
-    e.add_field(name="Опыт до следующего уровня", value=f"{have} / {need}", inline=False)
+    fill = min(12, have * 12 // need)
+    e.add_field(name=f"Опыт: {have} / {need}",
+                value="▰" * fill + "▱" * (12 - fill) + f"  {have * 100 // need}%", inline=False)
+    cur = await bot.db.execute(
+        "SELECT msgs,voice_min FROM users WHERE guild_id=? AND user_id=?", (inter.guild_id, m.id))
+    msgs, vmin = await cur.fetchone()
+    e.add_field(name="Сообщений", value=f"**{msgs or 0}**")
+    e.add_field(name="В голосовых", value=f"**{(vmin or 0) // 60} ч {(vmin or 0) % 60} мин**")
+    e.add_field(name="\u200b", value="\u200b")
     c = await get_cls(inter.guild_id, m.id)
     if c["cls"]:
         emo, cname, sname, _, _ = CLASSES[c["cls"]]
@@ -526,14 +558,14 @@ async def rob(inter: discord.Interaction, участник: discord.Member):
         stolen = random.randint(victim["balance"] // 10, victim["balance"] // 3)
         await bot.add(inter.guild_id, участник.id, -stolen)
         await bot.add(inter.guild_id, inter.user.id, stolen)
-        await send_card(inter, embed(
+        await send_public(inter, embed(
             "🦹 Ограбление", f"{inter.user.mention} украл у {участник.mention} **{fmt(stolen)}**!",
             discord.Color.green()), "rob")
     else:
         fine = random.randint(50, min(300, me["balance"]))
         await bot.add(inter.guild_id, inter.user.id, -fine)
         await bot.add(inter.guild_id, участник.id, fine)
-        await send_card(inter, embed(
+        await send_public(inter, embed(
             "🚨 Ограбление", f"{inter.user.mention} попался и выплатил {участник.mention} штраф **{fmt(fine)}**",
             discord.Color.red()), "rob")
 
@@ -787,6 +819,9 @@ class DuelView(discord.ui.View):
 
     @discord.ui.button(label="Принять", style=discord.ButtonStyle.success)
     async def accept(self, inter: discord.Interaction, button: discord.ui.Button):
+        if getattr(self, "done", False):  # защита от двойного нажатия
+            return
+        self.done = True
         self.stop()
         g = inter.guild_id
         ua, ub = await bot.get_user(g, self.a.id), await bot.get_user(g, self.b.id)
@@ -831,7 +866,7 @@ async def duel(inter: discord.Interaction, участник: discord.Member,
     if him["balance"] < ставка:
         return await reply(inter, "У соперника не хватает монет на такую ставку", ephemeral=True)
     view = DuelView(inter.user, участник, ставка)
-    view.message = await send_card(inter, view.card(
+    view.message = await send_public(inter, view.card(
         f"{inter.user.mention} вызывает {участник.mention} на дуэль!\n"
         f"Ставка: **{fmt(ставка)}** с каждого, победитель забирает всё.\n"
         "На ответ есть 60 секунд."), "duel", view=view, content=участник.mention)
@@ -897,6 +932,112 @@ async def inventory(inter: discord.Interaction, участник: discord.Member
     await reply(inter, embed=embed(f"🎒 Инвентарь {m.display_name}", text))
 
 
+# ═════════ Меню ═════════
+MENU_BUTTONS = [  # (ключ, подпись, эмодзи, ряд)
+    ("profile", "Профиль", "👤", 0), ("balance", "Баланс", "💰", 0),
+    ("top", "Топ", "🏆", 0), ("help", "Помощь", "❓", 0),
+    ("coin", "Монетка", "🪙", 1), ("slots", "Слоты", "🎰", 1),
+    ("skill", "Навык", "✨", 1), ("class", "Класс", "🎭", 1),
+    ("dep", "Положить", "🏦", 2), ("wd", "Снять", "💵", 2),
+    ("shop", "Магазин", "🛒", 2), ("inv", "Инвентарь", "🎒", 2),
+]
+MENU_MODALS = {"coin": "Монетка", "slots": "Слоты",
+               "dep": "Положить в банк (0 = всё)", "wd": "Снять из банка (0 = всё)"}
+
+
+async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
+    if key == "profile":
+        await profile.callback(inter, None)
+    elif key == "balance":
+        await balance.callback(inter, None)
+    elif key == "top":
+        await top.callback(inter)
+    elif key == "help":
+        await help_cmd.callback(inter)
+    elif key == "skill":
+        await skill.callback(inter)
+    elif key == "class":
+        await choose_class.callback(inter)
+    elif key == "shop":
+        await shop.callback(inter)
+    elif key == "inv":
+        await inventory.callback(inter, None)
+    elif key == "dep":
+        await deposit.callback(inter, n)
+    elif key == "wd":
+        await withdraw.callback(inter, n)
+    elif key in ("coin", "slots"):
+        if n < 10:
+            return await reply(inter, "Минимальная ставка — 10")
+        if key == "slots":
+            return await slots.callback(inter, n)
+        s = "решка" if side.strip().lower().startswith("р") else "орёл"
+        await coinflip.callback(inter, n, app_commands.Choice(name=s, value=s))
+
+
+class AmountModal(discord.ui.Modal):
+    def __init__(self, key: str):
+        super().__init__(title=MENU_MODALS[key])
+        self.key = key
+        self.amount = discord.ui.TextInput(label="Сумма", placeholder="например 100", max_length=9)
+        self.add_item(self.amount)
+        self.side = None
+        if key == "coin":
+            self.side = discord.ui.TextInput(label="Орёл или решка", default="орёл", max_length=10)
+            self.add_item(self.side)
+
+    async def on_submit(self, inter: discord.Interaction):
+        raw = self.amount.value.strip()
+        if not raw.isdigit():
+            return await inter.response.send_message("Нужно целое число", ephemeral=True)
+        await inter.response.defer(ephemeral=True, thinking=True)
+        async with ECON_LOCK:
+            await menu_action(self.key, inter, int(raw), self.side.value if self.side else "")
+
+
+class MenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key, label, emo, row in MENU_BUTTONS:
+            btn = discord.ui.Button(label=label, emoji=emo, row=row, custom_id=f"sd:{key}",
+                                    style=discord.ButtonStyle.secondary)
+            btn.callback = self.handler(key)
+            self.add_item(btn)
+
+    def handler(self, key: str):
+        async def run(inter: discord.Interaction):
+            if too_fast(inter.user.id):
+                return await inter.response.send_message(
+                    "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
+            if key in MENU_MODALS:
+                return await inter.response.send_modal(AmountModal(key))
+            await inter.response.defer(ephemeral=True, thinking=True)
+            async with ECON_LOCK:
+                await menu_action(key, inter)
+        return run
+
+
+def menu_message() -> dict:
+    e = discord.Embed(
+        title="🃏 Seikatsu Dealer — меню",
+        description=("Жми кнопки — ответ увидишь только ты, чат не засоряется.\n"
+                     "Командами остались только действия с другим игроком: "
+                     "`/дуэль`, `/ограбить`, `/перевод`, а ещё `/купить`."),
+        color=discord.Color.from_rgb(209, 53, 57))
+    kw = {"embed": e, "view": MenuView()}
+    b = getattr(bot, "banners", {})
+    path = b.get("menu") or b.get("help")
+    if path and os.path.exists(path):
+        e.set_image(url="attachment://card.png")
+        kw["file"] = discord.File(path, filename="card.png")
+    return kw
+
+
+@bot.tree.command(name="меню", description="Все действия кнопками")
+async def menu(inter: discord.Interaction):
+    await reply(inter, **menu_message())
+
+
 # ═════════ Админ-команды ═════════
 admin = app_commands.Group(name="эко", description="Управление экономикой",
                            default_permissions=discord.Permissions(administrator=True),
@@ -943,6 +1084,15 @@ async def a_del_item(inter: discord.Interaction, номер: int):
     await bot.db.execute("DELETE FROM shop WHERE id=? AND guild_id=?", (номер, inter.guild_id))
     await bot.db.commit()
     await reply(inter, f"🗑️ Товар #{номер} удалён")
+
+
+@admin.command(name="панель", description="Поставить в этот канал постоянное меню с кнопками")
+async def a_panel(inter: discord.Interaction):
+    try:
+        await inter.channel.send(**menu_message())
+    except discord.HTTPException:
+        return await reply(inter, "Не могу написать в этот канал — у бота нет прав")
+    await reply(inter, "✅ Панель поставлена. Закрепи сообщение, чтобы оно не уезжало.")
 
 
 bot.tree.add_command(admin)
