@@ -484,13 +484,13 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     if spec:
         left = c["ready"] - int(time.time())
         state = "активен" if c["active"] else (f"через {fmt_time(left)}" if left > 0 else "готов")
-        extra = [(f"Навык «{CLASSES[spec][2]}»", state),
-                 ("Ур. специальности", str(cls_level(c["xp"])))]
+        extra = [("Навык", state),
+                 ("Ур. навыка", str(cls_level(c["xp"])))]
         key = f"cls_{spec}"
     else:
         nxt = [(l, n) for l, n, p in JOBS if l > lvl]
         extra = [("Бонус", f"+{round((WORKER_XP_BONUS - 1) * 100)}% опыта"),
-                 ("След. должность", f"{nxt[0][1]} с {nxt[0][0]} ур." if nxt else "максимум")]
+                 ("Повышение", f"с {nxt[0][0]} уровня" if nxt else "максимум")]
         key = f"job{max(i for i, j in enumerate(JOBS) if lvl >= j[0]) + 1}"
     data = {"name": m.display_name, "title": job_title(lvl, spec), "level": lvl,
             "have": have, "need": need,
@@ -506,10 +506,7 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     try:
         png = await asyncio.to_thread(
             art.profile_card, banners.get(key) or banners.get("work"), data, avatar)
-        e = discord.Embed(color=discord.Color.from_rgb(209, 53, 57))
-        e.set_image(url="attachment://profile.png")
-        return await reply(inter, embed=e,
-                           file=discord.File(io.BytesIO(png), filename="profile.png"))
+        return await reply(inter, file=discord.File(io.BytesIO(png), filename="profile.png"))
     except Exception as ex:
         print("Карточка профиля не нарисована:", repr(ex))
     e = embed(f"Профиль {m.display_name}",

@@ -251,69 +251,75 @@ def _fit(d, text, size, room, min_size=7):
 
 
 def profile_card(banner_path, data: dict, avatar: bytes | None = None,
-                 W: int = 1200, H: int = 450) -> bytes:
+                 W: int = 1000, H: int = 500) -> bytes:
     """Картинка профиля: персонаж работы слева, имя, уровень, шкала опыта и статистика."""
     import io
-    P = 3
+    P = 2
     w, h = W // P, H // P
+    INK = (92, 16, 22)
     portrait = None
     if banner_path and os.path.exists(banner_path):
         b = Image.open(banner_path).convert("RGB")
-        portrait = b.crop((0, 0, 330, b.height)).resize((round(330 * H / b.height), H), Image.LANCZOS)
+        side = min(330, b.width)
+        portrait = b.crop((0, 0, side, b.height)).resize(
+            (round(side * H / b.height), H), Image.LANCZOS)
     x0 = (portrait.width if portrait else 0) // P
     lo = Image.new("RGB", (w, h), RED)
-    mask = Image.new("L", (w, h), 0)
-    md = ImageDraw.Draw(mask)
-    for x in range(w):
-        md.line([(x, 0), (x, h)], fill=max(0, min(170, (x - x0) * 6)))
-    lo = Image.composite(Image.new("RGB", (w, h), DARK_RED), lo, mask)
     d = ImageDraw.Draw(lo)
     d.fontmode = "1"
+    d.rectangle([x0, 0, w, h], fill=DARK_RED)
 
     def text(xy, s, f, color):
         d.text((xy[0] + 1, xy[1] + 1), s, font=f, fill=SHADOW)
         d.text(xy, s, font=f, fill=color)
 
-    tx, right = x0 + 10, w - 10
+    tx, right = x0 + 14, w - 14
     nx = tx
     if avatar:
         try:
-            av = Image.open(io.BytesIO(avatar)).convert("RGB").resize((26, 26), Image.LANCZOS)
-            d.rectangle([tx - 1, 7, tx + 26, 34], outline=CREAM)
-            lo.paste(av, (tx, 8))
-            nx = tx + 32
+            av = Image.open(io.BytesIO(avatar)).convert("RGB").resize((44, 44), Image.LANCZOS)
+            d.rectangle([tx - 2, 12, tx + 45, 59], fill=CREAM)
+            lo.paste(av, (tx, 14))
+            nx = tx + 56
         except Exception:
             pass
-    name, f = _fit(d, str(data["name"]).upper(), 14, right - nx, 9)
-    text((nx, 7), name, f, CREAM)
-    title, f = _fit(d, f"{data['title']} • УРОВЕНЬ {data['level']}".upper(), 9, right - nx)
-    text((nx, 25), title, f, RAY)
+    name, f = _fit(d, str(data["name"]).upper(), 22, right - nx, 13)
+    text((nx, 12), name, f, CREAM)
+    title, f = _fit(d, f"{data['title']} • УРОВЕНЬ {data['level']}".upper(), 14, right - nx, 9)
+    text((nx, 41), title, f, GOLD)
 
     have, need = data["have"], max(1, data["need"])
-    f8 = _font(8)
-    text((tx, 42), f"ОПЫТ {have} / {need}", f8, CREAM)
+    f12 = _font(12)
+    text((tx, 70), f"ОПЫТ {have} / {need}", f12, CREAM)
     pct = f"{have * 100 // need}%"
-    text((right - d.textlength(pct, font=f8), 42), pct, f8, GOLD)
-    d.rectangle([tx, 54, right, 62], fill=SHADOW, outline=CREAM)
-    fill = (right - tx - 2) * min(have, need) // need
+    text((right - d.textlength(pct, font=f12), 70), pct, f12, GOLD)
+    d.rectangle([tx, 88, right, 103], fill=SHADOW)
+    d.rectangle([tx, 88, right, 103], outline=CREAM)
+    fill = (right - tx - 4) * min(have, need) // need
     if fill > 0:
-        d.rectangle([tx + 1, 55, tx + 1 + fill, 61], fill=GOLD)
+        d.rectangle([tx + 2, 90, tx + 2 + fill, 101], fill=GOLD)
 
-    col = (right - tx) // 2
+    gap = 6
+    col = (right - tx - gap) // 2
     for i, (label, value) in enumerate(data["cells"][:6]):
-        cx, cy = tx + (i % 2) * col, 71 + (i // 2) * 26
-        lab, f = _fit(d, str(label).upper(), 8, col - 6)
-        text((cx, cy), lab, f, RAY)
-        val, f = _fit(d, str(value).upper(), 11, col - 6, 8)
-        text((cx, cy + 10), val, f, CREAM)
+        cx, cy = tx + (i % 2) * (col + gap), 113 + (i // 2) * 43
+        d.rectangle([cx, cy, cx + col, cy + 37], fill=INK)
+        d.rectangle([cx, cy, cx + 2, cy + 37], fill=GOLD)
+        lab, f = _fit(d, str(label).upper(), 12, col - 16, 8)
+        text((cx + 9, cy + 2), lab, f, RAY)
+        val, f = _fit(d, str(value).upper(), 15, col - 16, 9)
+        text((cx + 9, cy + 17), val, f, CREAM)
 
     big = lo.resize((W, H), Image.NEAREST)
     if portrait:
         fade = Image.new("L", portrait.size, 255)
         fd = ImageDraw.Draw(fade)
-        for x in range(portrait.width - 30, portrait.width):
-            fd.line([(x, 0), (x, H)], fill=int(255 * (portrait.width - x) / 30))
+        for x in range(portrait.width - 40, portrait.width):
+            fd.line([(x, 0), (x, H)], fill=int(255 * (portrait.width - x) / 40))
         big.paste(portrait, (0, 0), fade)
+    dd = ImageDraw.Draw(big)
+    dd.rectangle([0, 0, W - 1, H - 1], outline=SHADOW, width=6)
+    dd.rectangle([6, 6, W - 7, H - 7], outline=GOLD, width=2)
     out = io.BytesIO()
     big.save(out, "PNG")
     return out.getvalue()
