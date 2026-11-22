@@ -1,4 +1,5 @@
 """Игры на монеты: монетка и дуэли."""
+import os
 import random
 
 import discord
@@ -23,10 +24,14 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         await bot.add(g, uid, ставка)
         await bot.add(g, uid, 1, "flip_wins")
         msg, col = f"Выпал **{result}** — ты забираешь **{fmt(ставка * 2)}**! 🎉", discord.Color.green()
+        key = "win"
     else:
         await bot.add(g, uid, -ставка)
         msg, col = f"Выпал **{result}** — ставка **{fmt(ставка)}** сгорает 😢", discord.Color.red()
-    await send_card(inter, embed("🪙 Монетка", msg, col), "coinflip", rows=[["coin", "balance"]])
+        key = "lose"
+    if key not in getattr(bot, "banners", {}):
+        key = "coinflip"
+    await send_card(inter, embed("🪙 Монетка", msg, col), key, rows=[["coin", "balance"]])
 
 
 # ═════════ Дуэли ═════════
@@ -64,9 +69,15 @@ class DuelView(discord.ui.View):
         await bot.add(g, lose.id, -self.bet)
         await bot.add(g, win.id, self.bet)
         await bot.add(g, win.id, 1, "duel_wins")
-        await inter.response.edit_message(view=None, embed=self.card(
-            f"{win.mention} побеждает {lose.mention} и забирает **{fmt(self.bet * 2)}**!",
-            discord.Color.green()))
+        e = self.card(f"{win.mention} побеждает {lose.mention} и забирает **{fmt(self.bet * 2)}**!",
+                      discord.Color.green())
+        path = getattr(bot, "banners", {}).get("win")
+        if path and os.path.exists(path):   # баннер победы вместо баннера вызова
+            name = "win" + os.path.splitext(path)[1].lower()
+            e.set_image(url=f"attachment://{name}")
+            return await inter.response.edit_message(
+                view=None, embed=e, attachments=[discord.File(path, filename=name)])
+        await inter.response.edit_message(view=None, embed=e)
 
     @discord.ui.button(label="Отказаться", style=discord.ButtonStyle.danger)
     async def decline(self, inter: discord.Interaction, button: discord.ui.Button):
