@@ -69,15 +69,19 @@ class DuelView(discord.ui.View):
         await bot.add(g, lose.id, -self.bet)
         await bot.add(g, win.id, self.bet)
         await bot.add(g, win.id, 1, "duel_wins")
-        e = self.card(f"{win.mention} побеждает {lose.mention} и забирает **{fmt(self.bet * 2)}**!",
+        e = self.card(f"🎉 {win.mention} побеждает и забирает **{fmt(self.bet * 2)}**!",
                       discord.Color.green())
-        path = getattr(bot, "banners", {}).get("win")
-        if path and os.path.exists(path):   # баннер победы вместо баннера вызова
-            name = "win" + os.path.splitext(path)[1].lower()
-            e.set_image(url=f"attachment://{name}")
-            return await inter.response.edit_message(
-                view=None, embed=e, attachments=[discord.File(path, filename=name)])
-        await inter.response.edit_message(view=None, embed=e)
+        e2 = embed("⚔️ Дуэль", f"😢 {lose.mention} проигрывает **{fmt(self.bet)}**", discord.Color.red())
+        files = []
+        for key, em in (("win", e), ("lose", e2)):   # баннер победы и баннер поражения
+            path = getattr(bot, "banners", {}).get(key)
+            if path and os.path.exists(path):
+                name = key + os.path.splitext(path)[1].lower()
+                em.set_image(url=f"attachment://{name}")
+                files.append(discord.File(path, filename=name))
+            elif key == "win":
+                em.set_image(url=None)
+        await inter.response.edit_message(view=None, embeds=[e, e2], attachments=files)
 
     @discord.ui.button(label="Отказаться", style=discord.ButtonStyle.danger)
     async def decline(self, inter: discord.Interaction, button: discord.ui.Button):
