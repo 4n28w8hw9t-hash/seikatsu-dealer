@@ -14,10 +14,10 @@ from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rin
 
 
 # ═════════ Помощь ═════════
-@bot.tree.command(name="помощь", description="Что умеет Seikatsu Dealer")
+@bot.tree.command(name="помощь", description="Что умеет Seikatsu Court")
 async def help_cmd(inter: discord.Interaction):
     e = discord.Embed(
-        title="Seikatsu Dealer",
+        title="Seikatsu Court",
         description=("Принцесса двора **Seikatsu** и хранительница казны.\n"
                      "Всё делается кнопками, ответы видишь только ты."),
         color=RED,
