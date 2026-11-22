@@ -4,7 +4,7 @@ import os
 import discord
 from discord import app_commands
 
-from .core import card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, reply, send_card, too_fast
+from .core import E, card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, reply, send_card, too_fast
 from .achievements import achievements
 from .economy import balance, daily, profile
 from .games import coinflip
@@ -22,36 +22,36 @@ async def help_cmd(inter: discord.Interaction):
                      "Всё делается кнопками, ответы видишь только ты."),
         color=RED,
     )
-    e.add_field(name="🎁 Монеты", inline=False,
+    e.add_field(name=f"{E('sd_gift', '🎁')} Монеты", inline=False,
                 value=f"`/награда` — {DAILY_REWARD} монет раз в 24 часа\n"
                       "`/баланс` — сколько у тебя монет")
-    e.add_field(name="🎲 Игры", inline=False,
+    e.add_field(name=f"{E('sd_flip', '🎲')} Игры", inline=False,
                 value="`/монетка` — угадал сторону: x2, нет — ставка сгорает\n"
                       "`/дуэль @участник` — ставка с каждого, победитель забирает всё")
-    e.add_field(name="👤 Профиль", inline=False,
+    e.add_field(name=f"{E('sd_profile', '👤')} Профиль", inline=False,
                 value="`/путь` — знать или вера: от пути и уровня зависит титул\n"
                       "`/работа` — жалованье по титулу раз в 12 часов\n"
                       "`/профиль` — титул, уровень, опыт, баланс, пара, достижения\n"
                       "`/достижения` — все достижения с редкостью и наградами\n"
                       "Опыт идёт за сообщения и время в голосовых.")
-    e.add_field(name="💍 Брак", inline=False,
+    e.add_field(name=f"{E('sd_ring', '💍')} Брак", inline=False,
                 value="`/кольца` — купить кольцо · `/брак @участник` — предложение\n"
                       "`/пара` — парный профиль и лав-рума · `/развод`")
-    e.add_field(name="🎭 Роли", inline=False,
-                value=f"`/создать_роль` — своя роль за {market.ROLE_CREATE_PRICE:,} монет (до {market.ROLE_LIMIT} штук)\n"
+    e.add_field(name=f"{E('sd_inv', '🎭')} Роли", inline=False,
+                value=f"`/создать_роль` — своя роль за {market.ROLE_CREATE_PRICE:,} монет ".replace(",", " ")
+                      + f"(до {market.ROLE_LIMIT} штук)\n"
                       "`/роли` — надеть, снять, выставить на продажу\n"
-                      f"`/магазин` — купить роль; создатель получает {round(market.SELLER_SHARE * 100)}% с продажи"
-                      .replace(",", " "))
+                      f"`/магазин` — купить роль; создатель получает {round(market.SELLER_SHARE * 100)}% с продажи")
     e.set_footer(text="Админам: /эко — управление монетами")
     await send_card(inter, e, "help")
 
 
 # ═════════ Меню ═════════
 MENU_ROWS = [
-    "---", "### Профиль", ["profile", "path", "work", "ach"],
-    "---", "### Монеты", ["balance", "daily", "coin"],
-    "---", "### Пара", ["couple", "rings", "loveroom"],
-    "---", "### Роли", ["market", "roles", "rolecreate"],
+    "---", "### {sd_profile} Профиль", ["profile", "path", "work", "ach"],
+    "---", "### {sd_coin} Монеты", ["balance", "daily", "coin"],
+    "---", "### {sd_couple} Пара", ["couple", "rings", "loveroom"],
+    "---", "### {sd_inv} Роли", ["market", "roles", "rolecreate"],
     "---", ["help"],
 ]
 # окно с вводом: (заголовок, подпись поля, подсказка)
@@ -182,7 +182,10 @@ def menu_page() -> dict:
                      "-# Командами остались действия с другим игроком: "
                      "`/дуэль` и `/брак`."),
         color=RED)
-    kw = {"embed": e, "rows": MENU_ROWS, "nav": False}
+    emo = {k: E(k, d) for k, d in (("sd_profile", "👤"), ("sd_coin", "💰"),
+                                   ("sd_couple", "💞"), ("sd_inv", "🎭"))}
+    rows = [r.format(**emo) if isinstance(r, str) and "{" in r else r for r in MENU_ROWS]
+    kw = {"embed": e, "rows": rows, "nav": False}
     b = getattr(bot, "banners", {})
     path = b.get("menu") or b.get("help")
     if path and os.path.exists(path):
