@@ -50,6 +50,25 @@ def too_fast(user_id: int) -> bool:
     return False
 
 
+BOT_CHANNEL_ID = 1574168108434718780   # все сообщения бота идут в этот канал
+
+
+def bot_channel(guild: discord.Guild | None):
+    return guild.get_channel(BOT_CHANNEL_ID) if guild else None
+
+
+async def wrong_channel(inter: discord.Interaction) -> bool:
+    """Команда не в канале бота — скрытая подсказка перейти туда. True, если канал чужой."""
+    if inter.guild is None or inter.channel_id == BOT_CHANNEL_ID or bot_channel(inter.guild) is None:
+        return False
+    try:
+        await inter.response.send_message(
+            f"🥀 Команды бота работают только в <#{BOT_CHANNEL_ID}> — переходи туда", ephemeral=True)
+    except discord.HTTPException:
+        pass
+    return True
+
+
 AFTER_ACTION = []   # что сделать после каждой команды и кнопки (например, проверить достижения)
 
 
@@ -65,11 +84,13 @@ class DeferTree(app_commands.CommandTree):
     """Антиспам, мгновенное личное подтверждение и очередь для операций с монетами."""
     async def _call(self, interaction: discord.Interaction):
         if interaction.type == discord.InteractionType.application_command:
+            if await wrong_channel(interaction):
+                return
             try:
                 if too_fast(interaction.user.id):
                     return await interaction.response.send_message(
                         "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
-                await interaction.response.defer(ephemeral=True, thinking=True)
+                await interaction.response.defer(thinking=True)
             except discord.HTTPException:
                 pass
         async with ECON_LOCK:
@@ -106,6 +127,7 @@ BUTTONS = {
     "roles": ("Мои роли", "🎭", "inv", _B),
     "rolecreate": ("Создать роль", "✨", "skill", _OK),
     "help": ("Помощь", "❓", "help", _G),
+    "roomname": ("Название румы", "🏷️", "tag", _G),
 }
 NAV = ["menu", "profile", "balance", "daily", "couple"]
 
@@ -278,8 +300,8 @@ async def _deliver(inter: discord.Interaction, kw: dict, ephemeral: bool):
 
 
 async def reply(inter: discord.Interaction, content=None, *, embed=None, image=None,
-                rows=None, nav=True, ephemeral=True, allowed_mentions=None, key="deny"):
-    """Ответ, который видит только сам игрок. Кнопки ведут на другие страницы.
+                rows=None, nav=True, ephemeral=False, allowed_mentions=None, key="deny"):
+    """Ответ бота (виден всем в канале). Кнопки ведут на другие страницы.
 
     key — баннер для ответа без своей картинки (по умолчанию «отказ»), None — без баннера.
     """
@@ -365,6 +387,10 @@ class EconomyBot(commands.Bot):
             await self.db.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
         except Exception:
             pass  # колонка уже есть
+        try:
+            await self.db.execute("ALTER TABLE marriages ADD COLUMN room_name TEXT")
+        except Exception:
+            pass
         for col in ("cls TEXT", "cls_xp INTEGER DEFAULT 0", "cls_changed INTEGER DEFAULT 0",
                     "skill_ready INTEGER DEFAULT 0", "skill_active INTEGER DEFAULT 0",
                     "msgs INTEGER DEFAULT 0", "voice_min INTEGER DEFAULT 0",
@@ -520,7 +546,7 @@ async def on_guild_join(guild: discord.Guild):
             f"Добро пожаловать ко двору **{guild.name}**.\n"
             "Я — принцесса этих земель. Каждая монета в казне проходит через мои руки.\n\n"
             "**С чего начать**\n"
-            "📜 `/меню` — всё кнопками, ответы видишь только ты\n"
+            "📜 `/меню` — всё кнопками\n"
             "👑 `/путь` — знать или вера: титул растёт с уровнем\n"
             "⚒️ `/работа` — жалованье по титулу раз в 12 часов\n"
             "🎁 `/награда` — 100 монет раз в сутки\n"

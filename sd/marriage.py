@@ -25,17 +25,43 @@ def ring_emo(key: str) -> str:
 RING_SHORT = {"silver": "Серебро", "gold": "Золото", "ruby": "Рубин"}
 ROOM_CATEGORY = "💞 Лав-румы"
 ROOM_EMPTY_GRACE = 120   # пустая рума удаляется через 2 минуты
+ROOM_RENAME_PRICE = 1000  # своё название лав-румы
+ROOM_NAME_MAX = 40
+COUPLE_ROLE_ID = 1574169992038064318   # роль, которую получают все, у кого есть пара
+
+
+async def set_couple_role(guild_id: int, user_ids, give: bool):
+    """Выдаёт или снимает роль пары (без кэша участников)."""
+    for uid in user_ids:
+        try:
+            if give:
+                await bot.http.add_role(guild_id, uid, COUPLE_ROLE_ID, reason="Пара")
+            else:
+                await bot.http.remove_role(guild_id, uid, COUPLE_ROLE_ID, reason="Развод")
+        except discord.HTTPException as ex:
+            print("Роль пары не изменена:", uid, repr(ex))
+
+
+@bot.listen("on_ready")
+async def sync_couple_roles():
+    """После запуска выдаёт роль пары всем, кто уже в браке."""
+    try:
+        cur = await bot.db.execute("SELECT guild_id,a,b FROM marriages")
+        for gid, a, b in await cur.fetchall():
+            await set_couple_role(gid, (a, b), True)
+    except Exception as ex:
+        print("Роли пар не синхронизированы:", repr(ex))
 
 
 # ═════════ Данные ═════════
 async def get_marriage(guild_id: int, user_id: int) -> dict | None:
     cur = await bot.db.execute(
-        "SELECT a,b,since,ring,xp,room_id,room_created FROM marriages "
+        "SELECT a,b,since,ring,xp,room_id,room_created,room_name FROM marriages "
         "WHERE guild_id=? AND (a=? OR b=?)", (guild_id, user_id, user_id))
     r = await cur.fetchone()
     if not r:
         return None
-    return dict(zip(["a", "b", "since", "ring", "xp", "room_id", "room_created"], r))
+    return dict(zip(["a", "b", "since", "ring", "xp", "room_id", "room_created", "room_name"], r))
 
 
 async def get_rings(guild_id: int, user_id: int) -> dict[str, int]:
@@ -125,6 +151,7 @@ class MarryView(discord.ui.View):
             "INSERT INTO marriages(guild_id,a,b,since,ring,xp) VALUES(?,?,?,?,?,0)",
             (g, a, b, int(time.time()), self.ring))
         await bot.db.commit()
+        await set_couple_role(g, (a, b), True)
         name, _, _ = RINGS[self.ring]
         emo = ring_emo(self.ring)
         await inter.response.edit_message(view=None, embed=self.card(
@@ -204,7 +231,7 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
                       ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
     mine = inter.user.id in (mar["a"], mar["b"])
-    rows = [["loveroom", "divorce"]] if mine else []
+    rows = [["loveroom", "roomname", "divorce"]] if mine else []
     banners = getattr(bot, "banners", {})
     try:
         png = await asyncio.to_thread(
@@ -233,12 +260,12 @@ async def love_room(inter: discord.Interaction):
             await g.create_category(ROOM_CATEGORY, reason="Лав-румы для пар")
         lovers = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True,
                                              stream=True, use_voice_activation=True)
-        over = {g.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+        # руму видят все (и кто в ней сидит), но зайти могут только двое
+        over = {g.default_role: discord.PermissionOverwrite(view_channel=True, connect=False),
                 me: discord.PermissionOverwrite(view_channel=True, connect=True,
                                                 manage_channels=True, move_members=True),
                 discord.Object(id=mar["a"]): lovers, discord.Object(id=mar["b"]): lovers}
-        names = [await member_name(g, mar["a"]), await member_name(g, mar["b"])]
-        ch = await g.create_voice_channel(f"💞 {names[0]} & {names[1]}"[:100], category=cat,
+        ch = await g.create_voice_channel(await room_title(g, mar), category=cat,
                                           overwrites=over, user_limit=2,
                                           reason="Лав-рума пары")
     except discord.Forbidden:
@@ -247,8 +274,55 @@ async def love_room(inter: discord.Interaction):
                          (ch.id, int(time.time()), g.id, mar["a"]))
     await bot.db.commit()
     await reply(inter, embed=embed(
-        "💞 Лав-рума открыта", f"Заходи: {ch.mention}\nВидите и заходите в неё только вы двое. "
-        "Когда рума опустеет, она сама закроется через пару минут."), rows=[["couple"]], key="marry")
+        "💞 Лав-рума открыта", f"Заходи: {ch.mention}\nРуму видят все, но зайти можете только вы двое.\n"
+        f"Своё название — `/название_румы` ({fmt(ROOM_RENAME_PRICE)}).\n"
+        "Когда рума опустеет, она сама закроется через пару минут."), rows=[["couple", "roomname"]],
+        key="marry")
+
+
+async def room_title(g: discord.Guild, mar: dict) -> str:
+    if mar.get("room_name"):
+        return f"💞 {mar['room_name']}"[:100]
+    names = [await member_name(g, mar["a"]), await member_name(g, mar["b"])]
+    return f"💞 {names[0]} & {names[1]}"[:100]
+
+
+async def rename_room(inter: discord.Interaction, name: str):
+    g = inter.guild
+    mar = await get_marriage(g.id, inter.user.id)
+    if not mar:
+        return await reply(inter, "Название румы могут менять только пары", rows=[["rings"]])
+    name = " ".join(name.split())[:ROOM_NAME_MAX]
+    if not name:
+        return await reply(inter, "Название не может быть пустым", rows=[["couple"]])
+    u = await bot.get_user(g.id, inter.user.id)
+    if u["balance"] < ROOM_RENAME_PRICE:
+        return await reply(inter, f"Смена названия стоит **{fmt(ROOM_RENAME_PRICE)}**, "
+                                  f"у тебя **{fmt(u['balance'])}**", rows=[["balance", "daily"]])
+    await bot.add(g.id, inter.user.id, -ROOM_RENAME_PRICE)
+    await bot.db.execute("UPDATE marriages SET room_name=? WHERE guild_id=? AND a=?",
+                         (name, g.id, mar["a"]))
+    await bot.db.commit()
+    mar["room_name"] = name
+    note = "Название поставится, когда вы откроете лав-руму."
+    ch = g.get_channel(mar["room_id"]) if mar["room_id"] else None
+    if ch:
+        try:
+            await asyncio.wait_for(ch.edit(name=await room_title(g, mar), reason="Новое название"), 10)
+            note = f"Открытая рума уже переименована: {ch.mention}"
+        except Exception:
+            note = "Открытую руму Discord сейчас не дал переименовать — название встанет при следующем открытии."
+    await reply(inter, embed=embed("🏷️ Название лав-румы", f"Теперь ваша рума — **{name}**.\n"
+                                   f"Списано: {fmt(ROOM_RENAME_PRICE)}\n{note}"),
+                rows=[["loveroom", "couple"]], key="marry")
+
+
+@bot.tree.command(name="название_румы",
+                  description=f"Своё название лав-румы — {ROOM_RENAME_PRICE} монет")
+@app_commands.describe(название="Как будет называться ваша рума")
+async def room_name_cmd(inter: discord.Interaction,
+                        название: app_commands.Range[str, 1, ROOM_NAME_MAX]):
+    await rename_room(inter, название)
 
 
 async def clean_rooms():
@@ -301,3 +375,4 @@ async def dissolve(guild: discord.Guild, mar: dict):
             pass
     await bot.db.execute("DELETE FROM marriages WHERE guild_id=? AND a=?", (guild.id, mar["a"]))
     await bot.db.commit()
+    await set_couple_role(guild.id, (mar["a"], mar["b"]), False)

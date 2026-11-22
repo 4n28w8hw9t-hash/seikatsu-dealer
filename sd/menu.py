@@ -4,11 +4,11 @@ import os
 import discord
 from discord import app_commands
 
-from .core import E, card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, reply, send_card, too_fast
+from .core import wrong_channel, E, card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, fmt, reply, send_card, too_fast
 from .achievements import achievements
 from .economy import balance, daily, profile
 from .games import coinflip
-from . import market
+from . import market, marriage
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
 
@@ -19,7 +19,7 @@ async def help_cmd(inter: discord.Interaction):
     e = discord.Embed(
         title="Seikatsu Court",
         description=("Принцесса двора **Seikatsu** и хранительница казны.\n"
-                     "Всё делается кнопками, ответы видишь только ты."),
+                     "Всё делается кнопками."),
         color=RED,
     )
     e.add_field(name=f"{E('sd_gift', '🎁')} Монеты", inline=False,
@@ -37,7 +37,8 @@ async def help_cmd(inter: discord.Interaction):
                       "Опыт идёт за сообщения и время в голосовых.")
     e.add_field(name=f"{E('sd_ring', '💍')} Брак", inline=False,
                 value="`/кольца` — купить кольцо · `/брак @участник` — предложение\n"
-                      "`/пара` — парный профиль и лав-рума · `/развод`")
+                      "`/пара` — парный профиль и лав-рума · `/развод`\n"
+                      f"`/название_румы` — своё название лав-румы за {fmt(marriage.ROOM_RENAME_PRICE)}")
     e.add_field(name=f"{E('sd_inv', '🎭')} Роли", inline=False,
                 value=f"`/создать_роль` — своя роль за {market.ROLE_CREATE_PRICE:,} монет ".replace(",", " ")
                       + f"(до {market.ROLE_LIMIT} штук)\n"
@@ -105,12 +106,14 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
 
 async def begin(inter: discord.Interaction):
     """Нажатие в личном сообщении меняет его же; в общей панели — открывает личное."""
-    own = inter.message is not None and inter.message.flags.ephemeral
-    if own:
+    msg = inter.message
+    meta = getattr(msg, "interaction_metadata", None) if msg else None
+    own = msg is not None and (msg.flags.ephemeral or (meta is not None and meta.user.id == inter.user.id))
+    if own:  # своё сообщение — меняем его же
         await inter.response.defer()
         inter.extras["sd_edit"] = True
-    else:
-        await inter.response.defer(ephemeral=True, thinking=True)
+    else:    # чужое меню — открываем своё отдельным сообщением
+        await inter.response.defer(thinking=True)
 
 
 async def run_action(inter: discord.Interaction, key: str, n: int = 0, side: str = ""):
@@ -151,6 +154,14 @@ class AmountModal(discord.ui.Modal):
         await run_action(inter, self.key, int(raw), self.side.value if self.side else "")
 
 
+class RoomNameModal(discord.ui.Modal, title="Название лав-румы"):
+    name = discord.ui.TextInput(label="Название", placeholder="например: Наш замок",
+                                max_length=marriage.ROOM_NAME_MAX)
+
+    async def on_submit(self, inter: discord.Interaction):
+        await run_fn(inter, lambda i: marriage.rename_room(i, self.name.value), "roomname")
+
+
 @bot.event
 async def on_interaction(inter: discord.Interaction):
     """Все кнопки бота (sd:...) — работают и после перезапуска."""
@@ -163,9 +174,13 @@ async def on_interaction(inter: discord.Interaction):
     if key not in BUTTONS and not key.startswith("mk:"):
         return
     try:
+        if await wrong_channel(inter):
+            return
         if too_fast(inter.user.id):
             return await inter.response.send_message(
                 "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
+        if key == "roomname":
+            return await inter.response.send_modal(RoomNameModal())
         if key in MENU_MODALS:
             return await inter.response.send_modal(AmountModal(key))
         modal = market.modal_for(key)
@@ -179,7 +194,7 @@ async def on_interaction(inter: discord.Interaction):
 def menu_page() -> dict:
     e = discord.Embed(
         title="Двор Seikatsu — меню",
-        description=("Жми кнопки — всё открывается здесь же и видно только тебе.\n"
+        description=("Жми кнопки — своё меню меняется на месте, чужое открывает твоё.\n"
                      "-# Командами остались действия с другим игроком: "
                      "`/перевод`, `/дуэль` и `/брак`."),
         color=RED)

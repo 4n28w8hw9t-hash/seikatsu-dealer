@@ -87,7 +87,7 @@ async def notify(inter: discord.Interaction):
         try:
             e = embed("🏅 Новое достижение" if len(new) == 1 else "🏅 Новые достижения",
                       unlocked_text(new), discord.Color.gold())
-            await inter.followup.send(embed=e, ephemeral=True)
+            await inter.followup.send(embed=e)
         except discord.HTTPException:
             pass
 

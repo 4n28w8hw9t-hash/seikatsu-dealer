@@ -90,13 +90,13 @@ class DuelView(discord.ui.View):
 async def duel(inter: discord.Interaction, участник: discord.Member,
                ставка: app_commands.Range[int, 10]):
     if участник.bot or участник.id == inter.user.id:
-        return await reply(inter, "Так нельзя 🙃", ephemeral=True)
+        return await reply(inter, "Так нельзя 🙃")
     me = await bot.get_user(inter.guild_id, inter.user.id)
     if me["balance"] < ставка:
-        return await reply(inter, "Недостаточно монет в кошельке", ephemeral=True)
+        return await reply(inter, "Недостаточно монет в кошельке")
     him = await bot.get_user(inter.guild_id, участник.id)
     if him["balance"] < ставка:
-        return await reply(inter, "У соперника не хватает монет на такую ставку", ephemeral=True)
+        return await reply(inter, "У соперника не хватает монет на такую ставку")
     view = DuelView(inter.user, участник, ставка)
     view.message = await send_public(inter, view.card(
         f"{inter.user.mention} вызывает {участник.mention} на дуэль!\n"
