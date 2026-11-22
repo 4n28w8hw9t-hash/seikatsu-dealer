@@ -6,7 +6,7 @@ import time
 import discord
 from discord.ext import tasks
 
-from .core import MSG_COOLDOWN, bot
+from .core import MSG_COOLDOWN, bot, iconize
 
 XP_MSG = (15, 25)      # опыт за сообщение (не чаще раза в минуту)
 XP_VOICE = 10          # опыт за минуту в голосовом канале (если в канале хотя бы двое)
@@ -135,7 +135,7 @@ async def on_message(message: discord.Message):
     if new:
         try:
             await message.channel.send(
-                f"🏅 {message.author.mention} открывает достижение!\n{unlocked_text(new)}",
+                iconize(f"🏅 {message.author.mention} открывает достижение!\n{unlocked_text(new)}"),
                 allowed_mentions=discord.AllowedMentions(users=False))
         except discord.HTTPException:
             pass
@@ -145,7 +145,7 @@ async def on_message(message: discord.Message):
         text = (f"🥀 {message.author.mention} достигает **{lvl} уровня** и получает титул "
                 f"**{title}**!") if title else f"🥀 {message.author.mention} достигает **{lvl} уровня**!"
         try:
-            await message.channel.send(text)
+            await message.channel.send(iconize(text))
         except discord.HTTPException:
             pass
 

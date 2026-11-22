@@ -5,7 +5,7 @@ import time
 import discord
 from discord import app_commands
 
-from .core import bot, embed, fmt, member_name, reply, send_card
+from .core import bot, icon_emoji, embed, fmt, member_name, reply, send_card
 
 ROLE_CREATE_PRICE = 10_000   # создание роли
 ROLE_LIMIT = 3               # сколько ролей может создать один человек
@@ -102,7 +102,7 @@ async def show_for_sale(inter: discord.Interaction, ref: int):
     e = embed(f"🎭 {r['name']}", f"Цвет: **{color_of(r)}**\nСоздатель: **{owner}**\n"
               f"Продаж: **{r['sold']}**\nЦена: **{fmt(r['price'])}**",
               discord.Colour(r["color"]))
-    buy = discord.ui.Button(label=f"Купить за {r['price']}", emoji="🛍️",
+    buy = discord.ui.Button(label=f"Купить за {r['price']}", emoji=icon_emoji("🛍️"),
                             style=discord.ButtonStyle.success, custom_id=f"sd:mk:buy:{r['id']}")
     await send_card(inter, e, "shop", rows=[[buy, "market"]])
 
@@ -226,7 +226,7 @@ async def my_roles(inter: discord.Interaction):
         rows.append([discord.ui.Select(
             custom_id="sd:mk:mine", placeholder="Выбери роль",
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
-                                          emoji="⭐" if r["owner_id"] == inter.user.id else None)
+                                          emoji=icon_emoji("⭐") if r["owner_id"] == inter.user.id else None)
                      for r in roles[:25]])])
     rows.append(["rolecreate", "market"])
     await send_card(inter, e, "inv", rows=rows, allowed_mentions=discord.AllowedMentions.none())
@@ -241,21 +241,21 @@ async def show_mine(inter: discord.Interaction, ref: int):
     info = [f"Цвет: **{color_of(r)}**", f"Сейчас: **{'надета' if r['worn'] else 'снята'}**"]
     btn = []
     btn.append(discord.ui.Button(label="Снять" if r["worn"] else "Надеть",
-                                 emoji="👕", style=discord.ButtonStyle.secondary,
+                                 emoji=icon_emoji("👕"), style=discord.ButtonStyle.secondary,
                                  custom_id=f"sd:mk:{'off' if r['worn'] else 'on'}:{ref}"))
     if own:
         info.append(f"Продаж: **{r['sold']}** · заработано: **{fmt(r['earned'])}**")
         if r["price"] is None:
             info.append("В магазине: **нет**")
-            btn.append(discord.ui.Button(label="Выставить на продажу", emoji="🏷️",
+            btn.append(discord.ui.Button(label="Выставить на продажу", emoji=icon_emoji("🏷️"),
                                          style=discord.ButtonStyle.success,
                                          custom_id=f"sd:mk:sell:{ref}"))
         else:
             info.append(f"В магазине за **{fmt(r['price'])}**")
-            btn.append(discord.ui.Button(label="Изменить цену", emoji="🏷️",
+            btn.append(discord.ui.Button(label="Изменить цену", emoji=icon_emoji("🏷️"),
                                          style=discord.ButtonStyle.primary,
                                          custom_id=f"sd:mk:sell:{ref}"))
-            btn.append(discord.ui.Button(label="Снять с продажи", emoji="✖️",
+            btn.append(discord.ui.Button(label="Снять с продажи", emoji=icon_emoji("✖️"),
                                          style=discord.ButtonStyle.danger,
                                          custom_id=f"sd:mk:unsell:{ref}"))
     e = embed(f"🎭 {r['name']}" + (" ⭐" if own else ""), "\n".join(info), discord.Colour(r["color"]))

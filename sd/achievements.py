@@ -2,7 +2,7 @@
 import discord
 from discord import app_commands
 
-from .core import AFTER_ACTION, bot, embed, fmt, send_card
+from .core import E, AFTER_ACTION, bot, embed, fmt, send_card
 from .levels import level_of
 
 # редкость: (название, значок, награда в монетах)
@@ -73,7 +73,8 @@ def unlocked_text(new: list[str]) -> str:
     for k in new:
         _, name, cond, rar, _, _ = BY_KEY[k]
         rname, icon, reward = RARITY[rar]
-        lines.append(f"{icon} **{name}** · {rname} — {cond}\nНаграда: +**{fmt(reward)}**")
+        lines.append(f"{E(f'sd_ach_{k}', icon)} **{name}** · {rname} — {cond}\n"
+                     f"Награда: +**{fmt(reward)}**")
     return "\n\n".join(lines)
 
 
@@ -107,14 +108,14 @@ async def achievements(inter: discord.Interaction, участник: discord.Mem
             if r != rar:
                 continue
             if k in s["ach"]:
-                lines.append(f"🏅 **{name}** — {cond}")
+                lines.append(f"{E(f'sd_ach_{k}', '🏅')} **{name}** — {cond}")
             else:
                 have = min(s[stat], need)
                 if stat == "voice":   # минуты показываем часами
                     have, need = have // 60, need // 60
                 prog = f" ({have:,}/{need:,}{' ч' if stat == 'voice' else ''})".replace(",", " ") \
                     if need > 1 else ""
-                lines.append(f"🔒 {name} — {cond}{prog}")
+                lines.append(f"{E(f'sd_ach_{k}_off', '🔒')} {name} — {cond}{prog}")
         e.add_field(name=f"{icon} {rname} · +{reward:,} монет".replace(",", " "),
                     value="\n".join(lines), inline=False)
     await send_card(inter, e, "top", rows=[["profile"]])

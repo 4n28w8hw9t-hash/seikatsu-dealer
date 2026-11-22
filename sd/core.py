@@ -121,6 +121,41 @@ async def member_name(guild: discord.Guild | None, uid: int) -> str:
     return m.display_name if m else "кто-то"
 
 
+# обычные эмодзи → свои иконки бота (icons/<имя>.png). Если иконки нет — остаётся эмодзи.
+ICON_MAP = {
+    "⚪": "gem_common", "🔵": "gem_rare", "🟣": "gem_epic", "🟠": "gem_legendary",
+    "🔒": "lock", "🏅": "top", "⏳": "hourglass", "🥀": "rose", "📜": "help", "👑": "path",
+    "⚒️": "work", "🎁": "gift", "👤": "profile", "🪙": "flip", "⚔️": "duel", "💍": "ring",
+    "🎉": "win", "😢": "lose", "🛒": "shop", "🎭": "inv", "🛍️": "bag", "✨": "skill", "⭐": "skill",
+    "👕": "hanger", "🏷️": "tag", "✖️": "cancel", "✝️": "faith", "💞": "couple", "💔": "divorce",
+    "🕯️": "loveroom", "🏆": "trophy", "💰": "coin", "🎲": "flip", "💛": "ring_gold",
+    "❤️": "ring_ruby", "◀️": "menu", "❓": "help",
+}
+_ICON_ORDER = sorted(ICON_MAP, key=len, reverse=True)
+
+
+def iconize(text):
+    """Заменяет в тексте обычные эмодзи на свои иконки бота."""
+    if not text or not isinstance(text, str):
+        return text
+    emo = getattr(bot, "emo", {})
+    for u in _ICON_ORDER:
+        if u in text and emo.get(f"sd_{ICON_MAP[u]}"):
+            text = text.replace(u, emo[f"sd_{ICON_MAP[u]}"])
+    return text
+
+
+def icon_emoji(u: str):
+    """Эмодзи для кнопки: своя иконка, если есть, иначе обычный эмодзи."""
+    custom = getattr(bot, "emo", {}).get(f"sd_{ICON_MAP.get(u, '')}")
+    if custom:
+        try:
+            return discord.PartialEmoji.from_str(custom)
+        except Exception:
+            pass
+    return u
+
+
 def make_button(key: str) -> discord.ui.Button:
     label, emo, icon, style = BUTTONS[key]
     custom = getattr(bot, "emo", {}).get(f"sd_{icon}")
@@ -138,6 +173,10 @@ def _file(image) -> discord.File:
 
 
 def _embed_text(e: discord.Embed | None, content: str | None) -> str:
+    return iconize(_embed_text_raw(e, content))
+
+
+def _embed_text_raw(e: discord.Embed | None, content: str | None) -> str:
     parts = []
     if e is not None:
         if e.title:
@@ -444,7 +483,7 @@ bot = EconomyBot()
 
 
 def embed(title: str, desc: str = "", color=discord.Color.gold()) -> discord.Embed:
-    return discord.Embed(title=title, description=desc, color=color)
+    return discord.Embed(title=iconize(title), description=iconize(desc), color=color)
 
 
 @bot.event
