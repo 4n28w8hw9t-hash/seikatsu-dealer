@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 
 import art
-from .core import DAILY_REWARD, bot, embed, fmt, fmt_time, member_name, reply, send_card
+from .core import DAILY_REWARD, bot, embed, fmt, fmt_time, iconize, member_name, reply, send_card
 from .achievements import ACHIEVEMENTS, get_stats, unlock
 from .levels import PATHS, get_path, is_female, next_rank, rank_of, title_banner, work_pay, xp_for
 
@@ -40,6 +40,45 @@ async def daily(inter: discord.Interaction):
               f"+**{fmt(DAILY_REWARD)}**\nДней подряд: **{streak}**\n"
               f"Следующая — через 24 часа.", discord.Color.green())
     await send_card(inter, e, "daily", rows=[["balance", "coin"]])
+
+
+# ═════════ Перевод ═════════
+TRANSFER_MIN = 10
+
+
+@bot.tree.command(name="перевод", description="Перевести монеты другому участнику")
+@app_commands.describe(участник="Кому перевести", сумма=f"Сколько монет (от {TRANSFER_MIN})")
+async def transfer(inter: discord.Interaction, участник: discord.Member,
+                   сумма: app_commands.Range[int, 1, 1_000_000_000]):
+    g, uid, m = inter.guild_id, inter.user.id, участник
+    if m.id == uid:
+        return await reply(inter, "Самому себе перевести нельзя", rows=[["balance"]])
+    if m.bot:
+        return await reply(inter, "Ботам монеты не нужны", rows=[["balance"]])
+    if сумма < TRANSFER_MIN:
+        return await reply(inter, f"Минимальный перевод — {fmt(TRANSFER_MIN)}", rows=[["balance"]])
+    u = await bot.get_user(g, uid)
+    if u["balance"] < сумма:
+        return await reply(inter, f"Не хватает монет: у тебя **{fmt(u['balance'])}**",
+                           rows=[["balance", "daily"]])
+    await bot.add(g, uid, -сумма)
+    await bot.add(g, m.id, сумма)
+    left = u["balance"] - сумма
+    e = embed("💰 Перевод отправлен",
+              f"{m.mention} получает **{fmt(сумма)}**\nОсталось у тебя: **{fmt(left)}**",
+              discord.Color.green())
+    await send_card(inter, e, "balance", rows=[["balance", "profile"]])
+    # получатель узнаёт о переводе в канале
+    try:
+        await inter.channel.send(
+            iconize(f"💰 {inter.user.mention} переводит {m.mention} **{fmt(сумма)}**"),
+            allowed_mentions=discord.AllowedMentions(users=[m]))
+    except Exception as ex:
+        print("Не удалось объявить перевод:", repr(ex))
+    try:
+        await unlock(g, m.id)     # у получателя могли открыться «денежные» достижения
+    except Exception as ex:
+        print("Достижения получателя:", repr(ex))
 
 
 # ═════════ Профиль ═════════
