@@ -1,0 +1,293 @@
+"""Браки: кольца, предложение, парный профиль, опыт пары, лав-рума, развод."""
+import asyncio
+import time
+
+import discord
+from discord import app_commands
+
+import art
+from .core import bot, card_name, embed, fmt, member_name, reply, send_card, send_public
+from .levels import level_of, xp_for
+
+# кольцо: (название, цена, эмодзи). Предложение делается лучшим из купленных колец.
+RINGS = {
+    "silver": ("Серебряное кольцо", 300, "💍"),
+    "gold": ("Золотое кольцо", 1500, "💛"),
+    "ruby": ("Кольцо с рубином", 5000, "❤️"),
+}
+RING_SHORT = {"silver": "Серебро", "gold": "Золото", "ruby": "Рубин"}
+ROOM_CATEGORY = "💞 Лав-румы"
+ROOM_EMPTY_GRACE = 120   # пустая рума удаляется через 2 минуты
+
+
+# ═════════ Данные ═════════
+async def get_marriage(guild_id: int, user_id: int) -> dict | None:
+    cur = await bot.db.execute(
+        "SELECT a,b,since,ring,xp,room_id,room_created FROM marriages "
+        "WHERE guild_id=? AND (a=? OR b=?)", (guild_id, user_id, user_id))
+    r = await cur.fetchone()
+    if not r:
+        return None
+    return dict(zip(["a", "b", "since", "ring", "xp", "room_id", "room_created"], r))
+
+
+async def get_rings(guild_id: int, user_id: int) -> dict[str, int]:
+    cur = await bot.db.execute(
+        "SELECT ring,qty FROM rings WHERE guild_id=? AND user_id=? AND qty>0", (guild_id, user_id))
+    return {k: q for k, q in await cur.fetchall()}
+
+
+def best_ring(owned: dict[str, int]) -> str | None:
+    keys = [k for k in RINGS if owned.get(k)]
+    return max(keys, key=lambda k: RINGS[k][1]) if keys else None
+
+
+def other_of(mar: dict, uid: int) -> int:
+    return mar["b"] if mar["a"] == uid else mar["a"]
+
+
+# ═════════ Кольца ═════════
+@bot.tree.command(name="кольца", description="Лавка колец для предложения руки и сердца")
+async def rings_shop(inter: discord.Interaction):
+    owned = await get_rings(inter.guild_id, inter.user.id)
+    lines = [f"{emo} **{name}** — {fmt(price)}" + (f"  · у тебя: {owned[k]}" if owned.get(k) else "")
+             for k, (name, price, emo) in RINGS.items()]
+    e = embed("💍 Лавка колец", "\n".join(lines) +
+              "\n\nКольцо нужно, чтобы сделать предложение: `/брак @участник`.\n"
+              "Предложение делается самым дорогим из твоих колец, оно будет видно в парном профиле.")
+    await send_card(inter, e, "shop", rows=[[f"ring:{k}" for k in RINGS]])
+
+
+async def buy_ring(inter: discord.Interaction, key: str):
+    if key not in RINGS:
+        return
+    name, price, emo = RINGS[key]
+    u = await bot.get_user(inter.guild_id, inter.user.id)
+    if u["balance"] < price:
+        return await reply(inter, f"Не хватает монет: {name} стоит **{fmt(price)}**",
+                           rows=[["rings", "daily"]])
+    await bot.add(inter.guild_id, inter.user.id, -price)
+    await bot.db.execute(
+        "INSERT INTO rings(guild_id,user_id,ring,qty) VALUES(?,?,?,1) "
+        "ON CONFLICT(guild_id,user_id,ring) DO UPDATE SET qty=qty+1",
+        (inter.guild_id, inter.user.id, key))
+    await bot.db.commit()
+    e = embed(f"{emo} Куплено: {name}", f"Списано **{fmt(price)}**.\n"
+              "Теперь можно сделать предложение: `/брак @участник`.", discord.Color.green())
+    await send_card(inter, e, "shop", rows=[["rings", "couple"]])
+
+
+# ═════════ Предложение ═════════
+class MarryView(discord.ui.View):
+    def __init__(self, a: discord.Member, b: discord.Member, ring: str):
+        super().__init__(timeout=120)
+        self.a, self.b, self.ring = a, b, ring
+        self.message = None
+        self.done = False
+
+    def card(self, text: str, color=discord.Color.from_rgb(209, 53, 57)) -> discord.Embed:
+        e = embed("💍 Предложение", text, color)
+        if "marry" in getattr(bot, "banners", {}):
+            e.set_image(url=f"attachment://{card_name(bot.banners['marry'])}")
+        return e
+
+    async def interaction_check(self, inter: discord.Interaction) -> bool:
+        if inter.user.id != self.b.id:
+            await inter.response.send_message("Это предложение не тебе", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Согласиться", emoji="💞", style=discord.ButtonStyle.success)
+    async def accept(self, inter: discord.Interaction, button: discord.ui.Button):
+        if self.done:
+            return
+        self.done = True
+        self.stop()
+        g = inter.guild_id
+        if await get_marriage(g, self.a.id) or await get_marriage(g, self.b.id):
+            return await inter.response.edit_message(view=None, embed=self.card(
+                "Предложение больше не действует: кто-то уже в браке.", discord.Color.dark_grey()))
+        if not (await get_rings(g, self.a.id)).get(self.ring):
+            return await inter.response.edit_message(view=None, embed=self.card(
+                "Предложение больше не действует: кольца уже нет.", discord.Color.dark_grey()))
+        await bot.db.execute("UPDATE rings SET qty=qty-1 WHERE guild_id=? AND user_id=? AND ring=?",
+                             (g, self.a.id, self.ring))
+        a, b = sorted((self.a.id, self.b.id))
+        await bot.db.execute(
+            "INSERT INTO marriages(guild_id,a,b,since,ring,xp) VALUES(?,?,?,?,?,0)",
+            (g, a, b, int(time.time()), self.ring))
+        await bot.db.commit()
+        name, _, emo = RINGS[self.ring]
+        await inter.response.edit_message(view=None, embed=self.card(
+            f"{emo} {self.b.mention} говорит «да»!\n"
+            f"{self.a.mention} и {self.b.mention} теперь пара. Кольцо: **{name}**.\n"
+            "Парный профиль — `/пара`.", discord.Color.green()))
+
+    @discord.ui.button(label="Отказать", style=discord.ButtonStyle.danger)
+    async def decline(self, inter: discord.Interaction, button: discord.ui.Button):
+        if self.done:
+            return
+        self.done = True
+        self.stop()
+        await inter.response.edit_message(view=None, embed=self.card(
+            f"{self.b.mention} отказывает {self.a.mention}. Кольцо остаётся у тебя.",
+            discord.Color.dark_grey()))
+
+    async def on_timeout(self):
+        if self.message and not self.done:
+            try:
+                await self.message.edit(view=None, embed=self.card(
+                    f"{self.b.mention} не ответил(а) на предложение {self.a.mention}.",
+                    discord.Color.dark_grey()))
+            except discord.HTTPException:
+                pass
+
+
+@bot.tree.command(name="брак", description="Сделать предложение руки и сердца")
+@app_commands.describe(участник="Кому делаешь предложение")
+async def marry(inter: discord.Interaction, участник: discord.Member):
+    g = inter.guild_id
+    if участник.bot or участник.id == inter.user.id:
+        return await reply(inter, "Так нельзя 🙃")
+    if await get_marriage(g, inter.user.id):
+        return await reply(inter, "Ты уже в браке", rows=[["couple"]])
+    if await get_marriage(g, участник.id):
+        return await reply(inter, f"{участник.display_name} уже в браке")
+    ring = best_ring(await get_rings(g, inter.user.id))
+    if not ring:
+        return await reply(inter, "Для предложения нужно кольцо — купи его в лавке",
+                           rows=[["rings"]])
+    name, _, emo = RINGS[ring]
+    view = MarryView(inter.user, участник, ring)
+    view.message = await send_public(inter, view.card(
+        f"{inter.user.mention} встаёт на одно колено перед {участник.mention}\n"
+        f"и протягивает {emo} **{name}**.\n\nНа ответ есть 2 минуты."),
+        "marry", view=view, content=участник.mention)
+
+
+# ═════════ Парный профиль ═════════
+async def avatar_of(guild: discord.Guild, uid: int) -> bytes | None:
+    try:
+        m = guild.get_member(uid) or await guild.fetch_member(uid)
+        return await m.display_avatar.replace(size=128, format="png").read()
+    except Exception:
+        return None
+
+
+@bot.tree.command(name="пара", description="Парный профиль")
+@app_commands.describe(участник="Чью пару посмотреть")
+async def couple(inter: discord.Interaction, участник: discord.Member | None = None):
+    m = участник or inter.user
+    mar = await get_marriage(inter.guild_id, m.id)
+    if not mar:
+        who = "Ты не в браке" if m.id == inter.user.id else f"{m.display_name} не в браке"
+        return await reply(inter, embed=embed(
+            "💔 Пары нет", f"{who}.\nКупи кольцо в лавке и сделай предложение: `/брак @участник`."),
+            rows=[["rings"]], key="marry")
+    lvl = level_of(mar["xp"])
+    days = (int(time.time()) - mar["since"]) // 86400
+    ring_name = RING_SHORT.get(mar["ring"], "Кольцо")
+    names = [await member_name(inter.guild, mar["a"]), await member_name(inter.guild, mar["b"])]
+    data = {"names": names, "level": lvl, "have": mar["xp"] - xp_for(lvl),
+            "need": xp_for(lvl + 1) - xp_for(lvl),
+            "cells": [("Вместе", f"{days} дн."), ("Кольцо", ring_name),
+                      ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
+    avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
+    mine = inter.user.id in (mar["a"], mar["b"])
+    rows = [["loveroom", "divorce"]] if mine else []
+    banners = getattr(bot, "banners", {})
+    try:
+        png = await asyncio.to_thread(
+            art.couple_card, banners.get("marry") or banners.get("help"), data, *avs)
+        return await reply(inter, image=("couple.png", png), rows=rows)
+    except Exception as ex:
+        print("Парная карточка не нарисована:", repr(ex))
+    e = embed(f"💞 {names[0]} & {names[1]}", f"Уровень пары **{lvl}**")
+    for n, v in data["cells"]:
+        e.add_field(name=n, value=v)
+    await reply(inter, embed=e, rows=rows)
+
+
+# ═════════ Лав-рума ═════════
+async def love_room(inter: discord.Interaction):
+    g = inter.guild
+    mar = await get_marriage(g.id, inter.user.id)
+    if not mar:
+        return await reply(inter, "Лав-рума есть только у пар", rows=[["rings"]])
+    ch = g.get_channel(mar["room_id"]) if mar["room_id"] else None
+    if ch:
+        return await reply(inter, f"💞 Ваша лав-рума уже открыта: {ch.mention}", rows=[["couple"]])
+    me = g.me
+    try:
+        cat = discord.utils.get(g.categories, name=ROOM_CATEGORY) or \
+            await g.create_category(ROOM_CATEGORY, reason="Лав-румы для пар")
+        lovers = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True,
+                                             stream=True, use_voice_activation=True)
+        over = {g.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+                me: discord.PermissionOverwrite(view_channel=True, connect=True,
+                                                manage_channels=True, move_members=True),
+                discord.Object(id=mar["a"]): lovers, discord.Object(id=mar["b"]): lovers}
+        names = [await member_name(g, mar["a"]), await member_name(g, mar["b"])]
+        ch = await g.create_voice_channel(f"💞 {names[0]} & {names[1]}"[:100], category=cat,
+                                          overwrites=over, user_limit=2,
+                                          reason="Лав-рума пары")
+    except discord.Forbidden:
+        return await reply(inter, "У бота нет права «Управлять каналами» — попроси админа его выдать")
+    await bot.db.execute("UPDATE marriages SET room_id=?, room_created=? WHERE guild_id=? AND a=?",
+                         (ch.id, int(time.time()), g.id, mar["a"]))
+    await bot.db.commit()
+    await reply(inter, embed=embed(
+        "💞 Лав-рума открыта", f"Заходи: {ch.mention}\nВидите и заходите в неё только вы двое. "
+        "Когда рума опустеет, она сама закроется через пару минут."), rows=[["couple"]], key="marry")
+
+
+async def clean_rooms():
+    """Удаляет пустые лав-румы (вызывается раз в минуту)."""
+    cur = await bot.db.execute(
+        "SELECT guild_id,a,room_id,room_created FROM marriages WHERE room_id IS NOT NULL")
+    now = int(time.time())
+    for gid, a, room_id, created in await cur.fetchall():
+        guild = bot.get_guild(gid)
+        ch = guild.get_channel(room_id) if guild else None
+        if ch and (ch.voice_states or now - (created or 0) < ROOM_EMPTY_GRACE):
+            continue
+        if ch:
+            try:
+                await ch.delete(reason="Лав-рума опустела")
+            except discord.HTTPException:
+                continue
+        await bot.db.execute("UPDATE marriages SET room_id=NULL WHERE guild_id=? AND a=?", (gid, a))
+    await bot.db.commit()
+
+
+# ═════════ Развод ═════════
+@bot.tree.command(name="развод", description="Расторгнуть брак")
+async def divorce(inter: discord.Interaction):
+    mar = await get_marriage(inter.guild_id, inter.user.id)
+    if not mar:
+        return await reply(inter, "Ты не в браке")
+    name = await member_name(inter.guild, other_of(mar, inter.user.id))
+    await reply(inter, embed=embed(
+        "💔 Развод", f"Точно расторгнуть брак с **{name}**?\n"
+        "Опыт пары и кольцо пропадут, лав-рума закроется."), rows=[["divorce:yes", "couple"]],
+        key="marry")
+
+
+async def divorce_confirm(inter: discord.Interaction):
+    mar = await get_marriage(inter.guild_id, inter.user.id)
+    if not mar:
+        return await reply(inter, "Ты не в браке")
+    await dissolve(inter.guild, mar)
+    await reply(inter, embed=embed("💔 Брак расторгнут", "Каждый идёт своей дорогой."),
+                rows=[["rings"]], key="marry")
+
+
+async def dissolve(guild: discord.Guild, mar: dict):
+    ch = guild.get_channel(mar["room_id"]) if mar.get("room_id") else None
+    if ch:
+        try:
+            await ch.delete(reason="Развод")
+        except discord.HTTPException:
+            pass
+    await bot.db.execute("DELETE FROM marriages WHERE guild_id=? AND a=?", (guild.id, mar["a"]))
+    await bot.db.commit()
