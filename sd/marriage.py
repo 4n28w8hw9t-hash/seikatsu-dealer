@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 
 import art
-from .core import bot, card_name, embed, fmt, member_name, reply, send_card, send_public
+from .core import E, bot, card_name, embed, fmt, member_name, reply, send_card, send_public
 from .levels import level_of, xp_for
 
 # кольцо: (название, цена, эмодзи). Предложение делается лучшим из купленных колец.
@@ -15,6 +15,13 @@ RINGS = {
     "gold": ("Золотое кольцо", 1500, "💛"),
     "ruby": ("Кольцо с рубином", 5000, "❤️"),
 }
+
+
+def ring_emo(key: str) -> str:
+    """Своя иконка кольца (ring_silver / ring_gold / ring_ruby), иначе эмодзи."""
+    return E(f"sd_ring_{key}", RINGS[key][2])
+
+
 RING_SHORT = {"silver": "Серебро", "gold": "Золото", "ruby": "Рубин"}
 ROOM_CATEGORY = "💞 Лав-румы"
 ROOM_EMPTY_GRACE = 120   # пустая рума удаляется через 2 минуты
@@ -50,7 +57,7 @@ def other_of(mar: dict, uid: int) -> int:
 @bot.tree.command(name="кольца", description="Лавка колец для предложения руки и сердца")
 async def rings_shop(inter: discord.Interaction):
     owned = await get_rings(inter.guild_id, inter.user.id)
-    lines = [f"{emo} **{name}** — {fmt(price)}" + (f"  · у тебя: {owned[k]}" if owned.get(k) else "")
+    lines = [f"{ring_emo(k)} **{name}** — {fmt(price)}" + (f"  · у тебя: {owned[k]}" if owned.get(k) else "")
              for k, (name, price, emo) in RINGS.items()]
     e = embed("💍 Лавка колец", "\n".join(lines) +
               "\n\nКольцо нужно, чтобы сделать предложение: `/брак @участник`.\n"
@@ -61,7 +68,8 @@ async def rings_shop(inter: discord.Interaction):
 async def buy_ring(inter: discord.Interaction, key: str):
     if key not in RINGS:
         return
-    name, price, emo = RINGS[key]
+    name, price, _ = RINGS[key]
+    emo = ring_emo(key)
     u = await bot.get_user(inter.guild_id, inter.user.id)
     if u["balance"] < price:
         return await reply(inter, f"Не хватает монет: {name} стоит **{fmt(price)}**",
@@ -117,7 +125,8 @@ class MarryView(discord.ui.View):
             "INSERT INTO marriages(guild_id,a,b,since,ring,xp) VALUES(?,?,?,?,?,0)",
             (g, a, b, int(time.time()), self.ring))
         await bot.db.commit()
-        name, _, emo = RINGS[self.ring]
+        name, _, _ = RINGS[self.ring]
+        emo = ring_emo(self.ring)
         await inter.response.edit_message(view=None, embed=self.card(
             f"{emo} {self.b.mention} говорит «да»!\n"
             f"{self.a.mention} и {self.b.mention} теперь пара. Кольцо: **{name}**.\n"
@@ -157,7 +166,8 @@ async def marry(inter: discord.Interaction, участник: discord.Member):
     if not ring:
         return await reply(inter, "Для предложения нужно кольцо — купи его в лавке",
                            rows=[["rings"]])
-    name, _, emo = RINGS[ring]
+    name, _, _ = RINGS[ring]
+    emo = ring_emo(ring)
     view = MarryView(inter.user, участник, ring)
     view.message = await send_public(inter, view.card(
         f"{inter.user.mention} встаёт на одно колено перед {участник.mention}\n"
