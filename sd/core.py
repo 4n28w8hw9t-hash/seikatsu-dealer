@@ -430,8 +430,10 @@ class EconomyBot(commands.Bot):
                     base = f"sdx_{fn[:-4]}_"
                     name = f"{base}{zlib.crc32(raw) % 100000}"
                     try:
-                        for old in [em for n, em in have.items() if n.startswith(base) and n != name]:
-                            await old.delete()
+                        # старые версии этой же иконки: base + только цифры (не трогаем ring_gold у ring)
+                        for n in [n for n in have if n.startswith(base) and n[len(base):].isdigit()
+                                  and n != name]:
+                            await have.pop(n).delete()
                         if name not in have:
                             have[name] = await self.create_application_emoji(name=name, image=raw)
                         self.emo[f"sd_{fn[:-4]}"] = str(have[name])
