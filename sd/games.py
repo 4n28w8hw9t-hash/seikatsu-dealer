@@ -36,10 +36,13 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
 
 # ═════════ Дуэли ═════════
 class DuelView(discord.ui.View):
-    def __init__(self, a: discord.Member, b: discord.Member, bet: int):
-        super().__init__(timeout=60)
-        self.a, self.b, self.bet = a, b, bet
+    def __init__(self, a: discord.Member, b: discord.Member | None, bet: int):
+        super().__init__(timeout=60 if b else 120)
+        self.a, self.b, self.bet = a, b, bet   # b = None — открытая дуэль, принять может любой
+        self.open = b is None
         self.message = None
+        if self.open:
+            self.decline.label = "Отменить"
 
     def card(self, text: str, color=discord.Color.gold()) -> discord.Embed:
         e = embed("⚔️ Дуэль", text, color)
@@ -47,16 +50,24 @@ class DuelView(discord.ui.View):
             e.set_image(url=f"attachment://{card_name(bot.banners['duel'])}")
         return e
 
-    async def interaction_check(self, inter: discord.Interaction) -> bool:
-        if inter.user.id != self.b.id:
-            await inter.response.send_message("Это не твоя дуэль", ephemeral=True)
-            return False
-        return True
+    async def _deny(self, inter: discord.Interaction, text: str):
+        await inter.response.send_message(text, ephemeral=True)
 
     @discord.ui.button(label="Принять", style=discord.ButtonStyle.success)
     async def accept(self, inter: discord.Interaction, button: discord.ui.Button):
-        if getattr(self, "done", False):  # защита от двойного нажатия
+        if inter.user.id == self.a.id:
+            return await self._deny(inter, "Нельзя принять свой же вызов")
+        if not self.open and inter.user.id != self.b.id:
+            return await self._deny(inter, "Это не твоя дуэль")
+        if inter.user.bot:
             return
+        if getattr(self, "done", False):  # защита от двойного нажатия
+            return await self._deny(inter, "Вызов уже принят")
+        if self.open:
+            u = await bot.get_user(inter.guild_id, inter.user.id)
+            if u["balance"] < self.bet:
+                return await self._deny(inter, f"Нужно **{fmt(self.bet)}**, у тебя **{fmt(u['balance'])}**")
+            self.b = inter.user
         self.done = True
         self.stop()
         g = inter.guild_id
@@ -85,30 +96,47 @@ class DuelView(discord.ui.View):
 
     @discord.ui.button(label="Отказаться", style=discord.ButtonStyle.danger)
     async def decline(self, inter: discord.Interaction, button: discord.ui.Button):
+        if getattr(self, "done", False):
+            return
+        uid = inter.user.id
+        if uid == self.a.id:
+            text = f"{self.a.mention} отменил вызов."
+        elif not self.open and uid == self.b.id:
+            text = f"{self.b.mention} отказался от дуэли с {self.a.mention}."
+        else:
+            return await self._deny(inter, "Отменить может только тот, кто вызвал" if self.open
+                                    else "Это не твоя дуэль")
+        self.done = True
         self.stop()
-        await inter.response.edit_message(view=None, embed=self.card(
-            f"{self.b.mention} отказался от дуэли с {self.a.mention}.",
-            discord.Color.dark_grey()))
+        await inter.response.edit_message(view=None, embed=self.card(text, discord.Color.dark_grey()))
 
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(view=None, embed=self.card(
-                    f"{self.b.mention} не ответил на вызов {self.a.mention}.",
-                    discord.Color.dark_grey()))
+                text = (f"Никто не принял вызов {self.a.mention}." if self.open
+                        else f"{self.b.mention} не ответил на вызов {self.a.mention}.")
+                await self.message.edit(view=None, embed=self.card(text, discord.Color.dark_grey()))
             except discord.HTTPException:
                 pass
 
 
-@bot.tree.command(name="дуэль", description="Вызвать участника на дуэль на монеты")
-@app_commands.describe(участник="Кого вызываешь", ставка="Сколько ставит каждый")
-async def duel(inter: discord.Interaction, участник: discord.Member,
-               ставка: app_commands.Range[int, 10]):
-    if участник.bot or участник.id == inter.user.id:
+@bot.tree.command(name="дуэль", description="Дуэль на монеты: вызвать участника или любого желающего")
+@app_commands.describe(ставка="Сколько ставит каждый",
+                       участник="Кого вызываешь (пусто — принять может любой)")
+async def duel(inter: discord.Interaction, ставка: app_commands.Range[int, 10],
+               участник: discord.Member | None = None):
+    if участник and (участник.bot or участник.id == inter.user.id):
         return await reply(inter, "Так нельзя 🙃")
     me = await bot.get_user(inter.guild_id, inter.user.id)
     if me["balance"] < ставка:
         return await reply(inter, "Недостаточно монет в кошельке")
+    if участник is None:   # открытый вызов
+        view = DuelView(inter.user, None, ставка)
+        view.message = await send_public(inter, view.card(
+            f"{inter.user.mention} бросает вызов всем желающим!\n"
+            f"Ставка: **{fmt(ставка)}** с каждого, победитель забирает всё.\n"
+            "Жми «Принять», чтобы сразиться. Вызов действует 2 минуты."), "duel", view=view)
+        return
     him = await bot.get_user(inter.guild_id, участник.id)
     if him["balance"] < ставка:
         return await reply(inter, "У соперника не хватает монет на такую ставку")
