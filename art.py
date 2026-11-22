@@ -250,76 +250,197 @@ def _fit(d, text, size, room, min_size=7):
     return text, f
 
 
+# ───────── карточки профиля и пары (рисованный стиль) ─────────
+import io as _io
+import numpy as _np
+
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+P_CREAM, P_GOLD, P_GOLD_D, P_MUTED = (242, 226, 200), (214, 172, 92), (140, 104, 48), (176, 140, 110)
+P_PANEL = (30, 10, 13)
+
+
+def _pfont(kind: str, size: int):
+    """kind: sc (капитель) / text. Если шрифтов нет — обычный шрифт системы."""
+    name = {"sc": "cormorant-sc-700.ttf", "sc6": "cormorant-sc-600.ttf",
+            "text": "cormorant-garamond-700.ttf"}[kind]
+    try:
+        return ImageFont.truetype(os.path.join(_FONT_DIR, name), size)
+    except OSError:
+        return _font(max(8, size // 2))
+
+
+try:
+    from PIL import features as _features
+    _LNUM = ["lnum"] if _features.check("raqm") else None
+except Exception:
+    _LNUM = None
+
+
+def _tl(d, text, font):
+    return d.textlength(text, font=font, features=_LNUM)
+
+
+def _t(d, xy, text, font, fill):
+    d.text(xy, text, font=font, fill=fill, features=_LNUM)
+
+
+def _pfit(d, text, kind, size, room, min_size=14):
+    f = _pfont(kind, size)
+    while size > min_size and _tl(d, text, f) > room:
+        size -= 1
+        f = _pfont(kind, size)
+    while len(text) > 3 and _tl(d, text, f) > room:
+        text = text[:-2].rstrip() + "…"
+    return text, f
+
+
+def _pbg(w, h, cx=0.22):
+    y, x = _np.mgrid[0:h, 0:w].astype(_np.float32)
+    d = _np.sqrt(((x - w * cx) / (w * 0.75)) ** 2 + ((y - h * 0.45) / (h * 1.1)) ** 2)
+    t = _np.clip(d, 0, 1)[..., None]
+    img = _np.array([96, 18, 26]) * (1 - t) + _np.array([18, 6, 9]) * t
+    img += _np.random.default_rng(7).normal(0, 3.0, img.shape)
+    return Image.fromarray(_np.clip(img, 0, 255).astype(_np.uint8), "RGB")
+
+
+def _pframe(img):
+    d = ImageDraw.Draw(img)
+    w, h = img.size
+    d.rectangle([10, 10, w - 11, h - 11], outline=P_GOLD_D, width=2)
+    for cx, cy in ((10, 10), (w - 11, 10), (10, h - 11), (w - 11, h - 11)):
+        d.polygon([(cx, cy - 7), (cx + 7, cy), (cx, cy + 7), (cx - 7, cy)], fill=P_GOLD)
+
+
+def _char_for(banner_path):
+    """Вырезанный персонаж (chars/<имя>.png рядом с папкой banners), если он есть."""
+    if not banner_path:
+        return None
+    stem = os.path.splitext(os.path.basename(banner_path))[0]
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(banner_path))), "chars", stem + ".png")
+    return Image.open(p).convert("RGBA") if os.path.exists(p) else None
+
+
+def _portrait(img, banner_path, zone):
+    """Персонаж в своей левой зоне карточки (не заходит на текст). Возвращает x начала текста."""
+    W, H = img.size
+    char = _char_for(banner_path)
+    if char is not None:
+        scale = H * 1.5 / char.height
+        c = char.resize((round(char.width * scale), round(char.height * scale)), Image.LANCZOS)
+        x = (zone - c.width) // 2
+        layer = Image.new("RGBA", (zone, H), (0, 0, 0, 0))
+        layer.paste(c, (x, 24), c)
+        img.paste(layer, (0, 0), layer)
+    elif banner_path and os.path.exists(banner_path):   # запасной вариант: кусок баннера
+        b = Image.open(banner_path).convert("RGB")
+        part = b.crop((14, 14, 14 + round(zone * (b.height - 28) / H), b.height - 14))
+        part = part.resize((zone, H), Image.LANCZOS)
+        img.paste(part, (0, 0))
+    else:
+        return 40
+    d = ImageDraw.Draw(img)
+    d.rectangle([zone, 0, W, H], fill=(16, 5, 8))       # спокойный фон под текстом
+    d.line([(zone, 18), (zone, H - 18)], fill=P_GOLD_D, width=2)
+    d.polygon([(zone, H // 2 - 8), (zone + 8, H // 2), (zone, H // 2 + 8), (zone - 8, H // 2)], fill=P_GOLD)
+    return zone + 34
+
+
+def _avatar(img, data: bytes | None, xy, size):
+    d = ImageDraw.Draw(img)
+    x, y = xy
+    d.ellipse([x - 4, y - 4, x + size + 4, y + size + 4], fill=P_GOLD)
+    d.ellipse([x - 1, y - 1, x + size + 1, y + size + 1], fill=(20, 6, 8))
+    try:
+        av = Image.open(_io.BytesIO(data)).convert("RGB").resize((size, size), Image.LANCZOS)
+    except Exception:
+        return
+    m = Image.new("L", (size * 4, size * 4), 0)
+    ImageDraw.Draw(m).ellipse([0, 0, size * 4 - 1, size * 4 - 1], fill=255)
+    img.paste(av, (x, y), m.resize((size, size), Image.LANCZOS))
+
+
+def _shadow_text(d, xy, text, font, fill):
+    _t(d, (xy[0] + 2, xy[1] + 3), text, font, (0, 0, 0))
+    _t(d, xy, text, font, fill)
+
+
+def _bar(d, x0, y, x1, have, need, label):
+    f = _pfont("sc6", 22)
+    _shadow_text(d, (x0, y), label, f, P_CREAM)
+    pct = f"{have * 100 // max(1, need)}%"
+    _t(d, (x1 - _tl(d, pct, f), y), pct, f, P_GOLD)
+    y += 32
+    d.rounded_rectangle([x0, y, x1, y + 16], radius=8, fill=(12, 4, 6), outline=P_GOLD_D, width=1)
+    fill = round((x1 - x0 - 6) * min(have, need) / max(1, need))
+    if fill > 6:
+        d.rounded_rectangle([x0 + 3, y + 3, x0 + 3 + fill, y + 13], radius=5, fill=P_GOLD)
+    return y + 16
+
+
+def _cells(d, cells, x0, y, x1, cols, h=74, gap=12):
+    cw = (x1 - x0 - gap * (cols - 1)) / cols
+    for i, (label, value) in enumerate(cells):
+        cx = x0 + (i % cols) * (cw + gap)
+        cy = y + (i // cols) * (h + gap)
+        d.rounded_rectangle([cx, cy, cx + cw, cy + h], radius=8, fill=P_PANEL)
+        d.rectangle([cx, cy + 10, cx + 3, cy + h - 10], fill=P_GOLD)
+        lab, f = _pfit(d, str(label).upper(), "sc6", 19, cw - 28, 12)
+        _t(d, (cx + 16, cy + 9), lab, f, P_MUTED)
+        val, f = _pfit(d, str(value), "text", 30, cw - 28, 15)
+        _t(d, (cx + 16, cy + 33), val, f, P_CREAM)
+
+
 def profile_card(banner_path, data: dict, avatar: bytes | None = None,
                  W: int = 1000, H: int = 500) -> bytes:
-    """Картинка профиля: персонаж работы слева, имя, уровень, шкала опыта и статистика."""
-    import io
-    P = 2
-    w, h = W // P, H // P
-    INK = (92, 16, 22)
-    portrait = None
-    if banner_path and os.path.exists(banner_path):
-        b = Image.open(banner_path).convert("RGB")
-        side = min(330, b.width)
-        portrait = b.crop((0, 0, side, b.height)).resize(
-            (round(side * H / b.height), H), Image.LANCZOS)
-    x0 = (portrait.width if portrait else 0) // P
-    lo = Image.new("RGB", (w, h), RED)
-    d = ImageDraw.Draw(lo)
-    d.fontmode = "1"
-    d.rectangle([x0, 0, w, h], fill=DARK_RED)
+    """Профиль: персонаж слева, аватар, имя, титул, шкала опыта и шесть плашек."""
+    img = _pbg(W, H)
+    tx = _portrait(img, banner_path, 360)
+    d = ImageDraw.Draw(img)
+    right = W - 34
+    _avatar(img, avatar, (tx, 34), 78)
+    nx = tx + 100
+    name, f = _pfit(d, str(data["name"]), "sc", 52, right - nx, 24)
+    _shadow_text(d, (nx, 26), name, f, P_CREAM)
+    head = f"{data['title']} — уровень {data['level']}" if data.get("title") else f"Уровень {data['level']}"
+    head, f = _pfit(d, head, "sc6", 28, right - nx, 16)
+    _t(d, (nx, 86), head, f, P_GOLD)
+    y = _bar(d, tx, 140, right, data["have"], max(1, data["need"]),
+             f"Опыт {data['have']:,} / {data['need']:,}".replace(",", " "))
+    _cells(d, data["cells"][:6], tx, y + 22, right, cols=2)
+    _pframe(img)
+    out = _io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
 
-    def text(xy, s, f, color):
-        d.text((xy[0] + 1, xy[1] + 1), s, font=f, fill=SHADOW)
-        d.text(xy, s, font=f, fill=color)
 
-    tx, right = x0 + 14, w - 14
-    nx = tx
-    if avatar:
-        try:
-            av = Image.open(io.BytesIO(avatar)).convert("RGB").resize((44, 44), Image.LANCZOS)
-            d.rectangle([tx - 2, 12, tx + 45, 59], fill=CREAM)
-            lo.paste(av, (tx, 14))
-            nx = tx + 56
-        except Exception:
-            pass
-    name, f = _fit(d, str(data["name"]).upper(), 22, right - nx, 13)
-    text((nx, 12), name, f, CREAM)
-    title, f = _fit(d, f"{data['title']} • УРОВЕНЬ {data['level']}".upper(), 14, right - nx, 9)
-    text((nx, 41), title, f, GOLD)
+def _heart(d, cx, cy, r, fill):
+    d.ellipse([cx - r, cy - r * 0.6, cx, cy + r * 0.4], fill=fill)
+    d.ellipse([cx, cy - r * 0.6, cx + r, cy + r * 0.4], fill=fill)
+    d.polygon([(cx - r * 0.98, cy), (cx + r * 0.98, cy), (cx, cy + r * 1.15)], fill=fill)
 
-    have, need = data["have"], max(1, data["need"])
-    f12 = _font(12)
-    text((tx, 70), f"ОПЫТ {have} / {need}", f12, CREAM)
-    pct = f"{have * 100 // need}%"
-    text((right - d.textlength(pct, font=f12), 70), pct, f12, GOLD)
-    d.rectangle([tx, 88, right, 103], fill=SHADOW)
-    d.rectangle([tx, 88, right, 103], outline=CREAM)
-    fill = (right - tx - 4) * min(have, need) // need
-    if fill > 0:
-        d.rectangle([tx + 2, 90, tx + 2 + fill, 101], fill=GOLD)
 
-    gap = 6
-    col = (right - tx - gap) // 2
-    for i, (label, value) in enumerate(data["cells"][:6]):
-        cx, cy = tx + (i % 2) * (col + gap), 113 + (i // 2) * 43
-        d.rectangle([cx, cy, cx + col, cy + 37], fill=INK)
-        d.rectangle([cx, cy, cx + 2, cy + 37], fill=GOLD)
-        lab, f = _fit(d, str(label).upper(), 12, col - 16, 8)
-        text((cx + 9, cy + 2), lab, f, RAY)
-        val, f = _fit(d, str(value).upper(), 15, col - 16, 9)
-        text((cx + 9, cy + 17), val, f, CREAM)
-
-    big = lo.resize((W, H), Image.NEAREST)
-    if portrait:
-        fade = Image.new("L", portrait.size, 255)
-        fd = ImageDraw.Draw(fade)
-        for x in range(portrait.width - 40, portrait.width):
-            fd.line([(x, 0), (x, H)], fill=int(255 * (portrait.width - x) / 40))
-        big.paste(portrait, (0, 0), fade)
-    dd = ImageDraw.Draw(big)
-    dd.rectangle([0, 0, W - 1, H - 1], outline=SHADOW, width=6)
-    dd.rectangle([6, 6, W - 7, H - 7], outline=GOLD, width=2)
-    out = io.BytesIO()
-    big.save(out, "PNG")
+def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
+                avatar_b: bytes | None = None, W: int = 1000, H: int = 500) -> bytes:
+    """Парный профиль: две аватарки с сердцем, имена, уровень и опыт пары, три плашки."""
+    img = _pbg(W, H)
+    tx = _portrait(img, banner_path, 400)
+    d = ImageDraw.Draw(img)
+    right = W - 34
+    mid = (tx + right) // 2
+    size = 92
+    _avatar(img, avatar_a, (mid - size - 38, 30), size)
+    _avatar(img, avatar_b, (mid + 38, 30), size)
+    _heart(d, mid, 70, 20, P_GOLD)
+    names = " & ".join(str(n) for n in data["names"])
+    names, f = _pfit(d, names, "sc", 44, right - tx, 22)
+    _shadow_text(d, (mid - _tl(d, names, f) / 2, 136), names, f, P_CREAM)
+    lv = f"Уровень пары {data['level']}"
+    f = _pfont("sc6", 28)
+    _t(d, (mid - _tl(d, lv, f) / 2, 190), lv, f, P_GOLD)
+    y = _bar(d, tx, 236, right, data["have"], max(1, data["need"]),
+             f"Опыт пары {data['have']:,} / {data['need']:,}".replace(",", " "))
+    _cells(d, data["cells"][:3], tx, y + 24, right, cols=3, h=80)
+    _pframe(img)
+    out = _io.BytesIO()
+    img.save(out, "PNG")
     return out.getvalue()
