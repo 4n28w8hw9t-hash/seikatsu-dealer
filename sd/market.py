@@ -143,6 +143,42 @@ def parse_color(raw: str) -> int | None:
     return int(m.group(1), 16) if m else None
 
 
+def role_spot(g: discord.Guild) -> int:
+    """Позиция для ролей игроков: сразу над ролью бустера (и ниже всех ролей над ним)."""
+    top = g.me.top_role.position - 1          # выше роли бота поставить нельзя
+    booster = g.premium_subscriber_role
+    if booster and booster.position < top:
+        return booster.position + 1
+    return max(1, top)
+
+
+async def place_role(g: discord.Guild, role: discord.Role):
+    try:
+        await role.edit(position=role_spot(g))
+    except discord.HTTPException as ex:
+        print("Роль не передвинута:", role.name, repr(ex))
+
+
+@bot.listen("on_ready")
+async def fix_role_positions():
+    """Старые роли игроков ставим на место: сразу над ролью бустера."""
+    for g in bot.guilds:
+        booster = g.premium_subscriber_role
+        if not booster:
+            continue
+        try:
+            cur = await bot.db.execute("SELECT role_id FROM custom_roles WHERE guild_id=?", (g.id,))
+            ids = {r[0] for r in await cur.fetchall()}
+            roles = sorted([g.get_role(i) for i in ids if g.get_role(i)], key=lambda r: r.position)
+            for r in roles:
+                if (r.position < booster.position or r.position > booster.position + len(roles)) \
+                        and r < g.me.top_role:
+                    await place_role(g, r)
+                    booster = g.premium_subscriber_role
+        except Exception as ex:
+            print("Роли игроков не передвинуты:", repr(ex))
+
+
 async def create_role(inter: discord.Interaction, name: str, color_raw: str):
     g = inter.guild
     uid = inter.user.id
@@ -168,10 +204,7 @@ async def create_role(inter: discord.Interaction, name: str, color_raw: str):
                                    reason=f"Роль игрока {inter.user}")
     except discord.HTTPException:
         return await reply(inter, NO_RIGHTS)
-    try:  # ставим сразу под ролью бота, чтобы цвет был виден
-        await role.edit(position=max(1, g.me.top_role.position - 1))
-    except discord.HTTPException:
-        pass
+    await place_role(g, role)
     try:
         await inter.user.add_roles(role, reason="Создатель роли")
     except discord.HTTPException:
