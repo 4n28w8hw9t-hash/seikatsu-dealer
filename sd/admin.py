@@ -154,7 +154,7 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
     banner = bn.get("admin") or bn.get("top")
     try:
         img = await asyncio.to_thread(
-            art.panel_card, banner, m.display_name, f"@{m.name} · канцелярия двора", "adm_seal",
+            art.panel_card, banner, m.display_name, f"@{m.name} · канцелярия двора", "",
             ((xp - lo) / max(hi - lo, 1), f"{lvl} уровень", f"до {lvl + 1}: {num(hi - xp)} опыта"),
             tiles, lines, 1200, avatar)
         e = discord.Embed(color=discord.Color.from_rgb(150, 30, 40))
