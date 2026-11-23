@@ -375,7 +375,7 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
 
 
 # ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════
-DIVIDERS = [1574467661067194410, 1574469695627591700]   # «стафф», «участники» (сверху вниз)
+DIVIDERS = [1574467661067194410, 1574469695627591700, 1365250956710772756]   # staff, roles, member
 WRONG_DIVIDER = 1365250956710772756   # по ошибке считалась разделителем 23.11 — откатываем
 
 
@@ -456,9 +456,8 @@ async def _divider_startup():
         try:
             if not g.chunked:
                 await g.chunk()
-            await undo_wrong_divider(g)
         except Exception as ex:
-            print("Откат разделителя не выполнен:", repr(ex))
+            print("Участники не загружены:", repr(ex))
         try:
             if not g.chunked:
                 await g.chunk()
