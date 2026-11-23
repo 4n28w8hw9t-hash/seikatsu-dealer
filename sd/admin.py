@@ -375,7 +375,8 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
 
 
 # ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════
-DIVIDERS = [1574467661067194410, 1365250956710772756]   # «стафф», «участники» (сверху вниз)
+DIVIDERS = [1574467661067194410, 1574469695627591700]   # «стафф», «участники» (сверху вниз)
+WRONG_DIVIDER = 1365250956710772756   # по ошибке считалась разделителем 23.11 — откатываем
 
 
 def _sections(guild: discord.Guild) -> dict[int, set[int]]:
@@ -418,9 +419,46 @@ async def _divider_update(before: discord.Member, after: discord.Member):
         await sync_dividers(after)
 
 
+async def undo_wrong_divider(g: discord.Guild):
+    """Один раз: вернуть роль WRONG_DIVIDER тем, у кого бот её снял, и снять у тех, кому выдал."""
+    import datetime
+    key = f"undo_div_{g.id}"
+    cur = await bot.db.execute("SELECT value FROM meta WHERE key=?", (key,))
+    if await cur.fetchone():
+        return
+    since = datetime.datetime(2026, 11, 23, 17, 40, tzinfo=datetime.timezone.utc)
+    back = gone = 0
+    async for e in g.audit_logs(limit=None, after=since, action=discord.AuditLogAction.member_role_update):
+        if not e.user or e.user.id != bot.user.id or not (e.reason or "").startswith("Разделитель"):
+            continue
+        m = g.get_member(getattr(e.target, "id", 0))
+        if not m:
+            continue
+        removed = {r.id for r in getattr(e.before, "roles", []) or []}
+        added = {r.id for r in getattr(e.after, "roles", []) or []}
+        try:
+            if WRONG_DIVIDER in removed and not m.get_role(WRONG_DIVIDER):
+                await m.add_roles(discord.Object(id=WRONG_DIVIDER), reason="Откат ошибки разделителей")
+                back += 1
+            elif WRONG_DIVIDER in added and m.get_role(WRONG_DIVIDER):
+                await m.remove_roles(discord.Object(id=WRONG_DIVIDER), reason="Откат ошибки разделителей")
+                gone += 1
+        except discord.HTTPException as ex:
+            print("Откат не удался:", m, repr(ex))
+    await bot.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, "1"))
+    await bot.db.commit()
+    print(f"[РАЗДЕЛИТЕЛИ] откат: роль возвращена {back}, снята {gone}")
+
+
 @bot.listen("on_ready")
 async def _divider_startup():
     for g in bot.guilds:
+        try:
+            if not g.chunked:
+                await g.chunk()
+            await undo_wrong_divider(g)
+        except Exception as ex:
+            print("Откат разделителя не выполнен:", repr(ex))
         try:
             if not g.chunked:
                 await g.chunk()
