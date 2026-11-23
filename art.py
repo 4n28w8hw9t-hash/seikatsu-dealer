@@ -459,7 +459,7 @@ def _icon(name, size):
 
 
 def panel_card(banner_path, title: str, subtitle: str = "", icon: str = "", bar=None,
-               tiles=(), lines=(), W: int = 1200) -> bytes:
+               tiles=(), lines=(), W: int = 1200, avatar: bytes | None = None) -> bytes:
     """Баннер сверху, ниже — заголовок, шкала, плитки с цифрами и строки.
 
     bar = (доля 0..1, подпись слева, подпись справа)
@@ -486,11 +486,22 @@ def panel_card(banner_path, title: str, subtitle: str = "", icon: str = "", bar=
     if ic:
         img.paste(ic, (x, y + 4), ic)
         x += 62
-    t, f = _pfit(d, title, "sc", 58, W - pad - x, 26)
+    av_w = 0
+    if avatar:   # аватар участника справа от заголовка, в золотой рамке
+        try:
+            av = Image.open(_io.BytesIO(avatar)).convert("RGB").resize((112, 112), Image.LANCZOS)
+            ax, ay = W - pad - 112, top + 20
+            d.rectangle([ax - 5, ay - 5, ax + 116, ay + 116], fill=(8, 2, 4), outline=P_GOLD, width=3)
+            img.paste(av, (ax, ay))
+            d.rectangle([ax - 1, ay - 1, ax + 112, ay + 112], outline=P_GOLD_D, width=1)
+            av_w = 150
+        except Exception:
+            pass
+    t, f = _pfit(d, title, "sc", 58, W - pad - x - av_w, 26)
     _shadow_text(d, (x, y - 8), t, f, P_GOLD)
     y += 62
     if subtitle:
-        s, f = _pfit(d, subtitle, "sc6", 30, W - 2 * pad, 16)
+        s, f = _pfit(d, subtitle, "sc6", 30, W - 2 * pad - av_w, 16)
         _t(d, (pad, y), s, f, P_MUTED)
         y += 40
     if bar:
