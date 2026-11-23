@@ -372,3 +372,62 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
             e.set_image(url="attachment://staff.jpg")
     kw = {"file": f} if f else {}
     await inter.followup.send(embed=e, view=view, ephemeral=True, **kw)
+
+
+# ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════
+DIVIDERS = [1574467661067194410, 1365250956710772756]   # «стафф», «участники» (сверху вниз)
+
+
+def _sections(guild: discord.Guild) -> dict[int, set[int]]:
+    """Разделитель → айди ролей под ним (до следующего разделителя ниже)."""
+    divs = sorted([r for r in (guild.get_role(i) for i in DIVIDERS) if r],
+                  key=lambda r: r.position, reverse=True)
+    out = {}
+    for i, d in enumerate(divs):
+        low = divs[i + 1].position if i + 1 < len(divs) else 0
+        out[d.id] = {r.id for r in guild.roles
+                     if low < r.position < d.position and not r.is_default()
+                     and not r.is_bot_managed() and not r.is_integration()}
+    return out
+
+
+async def sync_dividers(member: discord.Member, sections=None):
+    if member.bot:
+        return
+    sections = sections or _sections(member.guild)
+    have = {r.id for r in member.roles}
+    add, remove = [], []
+    for did, ids in sections.items():
+        need = bool(have & ids)
+        if need and did not in have:
+            add.append(discord.Object(id=did))
+        elif not need and did in have:
+            remove.append(discord.Object(id=did))
+    try:
+        if add:
+            await member.add_roles(*add, reason="Разделитель: есть роль из раздела")
+        if remove:
+            await member.remove_roles(*remove, reason="Разделитель: в разделе нет ролей")
+    except discord.HTTPException as ex:
+        print("Разделитель не выдан:", member, repr(ex))
+
+
+@bot.listen("on_member_update")
+async def _divider_update(before: discord.Member, after: discord.Member):
+    if before.roles != after.roles:
+        await sync_dividers(after)
+
+
+@bot.listen("on_ready")
+async def _divider_startup():
+    for g in bot.guilds:
+        try:
+            if not g.chunked:
+                await g.chunk()
+            sections = _sections(g)
+            if not sections:
+                continue
+            for m in list(g.members):
+                await sync_dividers(m, sections)
+        except Exception as ex:
+            print("Разделители не проверены:", repr(ex))

@@ -425,7 +425,7 @@ class EconomyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = False  # для награды за сообщения текст не нужен
-        intents.members = False
+        intents.members = True   # нужно, чтобы видеть выдачу ролей (разделители)
         super().__init__(command_prefix="!", intents=intents, tree_cls=DeferTree)
         self.db: aiosqlite.Connection | None = None
         self.msg_cd: dict[tuple[int, int], float] = {}
