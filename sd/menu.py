@@ -1,13 +1,16 @@
 """Меню, помощь и обработка всех кнопок."""
 import os
+import time
 
 import discord
 from discord import app_commands
 
 from .core import wrong_channel, E, card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, fmt, reply, send_card, too_fast
-from .achievements import achievements
-from .economy import balance, daily, profile
-from .games import coinflip
+from .core import btn, fmt_time, member_name, send_panel, _OK, _G
+from .achievements import ACHIEVEMENTS, achievements, get_stats
+from .economy import DAY, balance, daily, profile
+from .games import coinflip, duel
+from .levels import PATHS, RANK_STEP, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, work_pay, xp_for
 from . import market, marriage
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
@@ -57,12 +60,101 @@ MENU_ROWS = [
     "---", ["help"],
 ]
 # окно с вводом: (заголовок, подпись поля, подсказка)
-MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100")}
+MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"),
+               "duel": ("Открытая дуэль", "Ставка с каждого", "например 100")}
+
+# выпадающий список «Все разделы»: (ключ, подпись, пояснение)
+SECTIONS = [
+    ("path", "Путь и титул", "Знать или Вера, следующее звание"),
+    ("ach", "Достижения", "Награды за успехи"),
+    ("coin", "Монетка", "Орёл или решка, выигрыш x2"),
+    ("duel", "Дуэль", "Открытый вызов — принять может любой"),
+    ("couple", "Пара", "Карточка пары, лав-рума, название"),
+    ("rings", "Кольца", "Купить кольцо для предложения"),
+    ("loveroom", "Лав-рума", "Открыть комнату для двоих"),
+    ("market", "Рынок ролей", "Роли, созданные игроками"),
+    ("roles", "Мои роли", "Надеть, снять, продать"),
+    ("rolecreate", "Создать роль", "Своя роль за 10 000"),
+    ("help", "Помощь", "Все команды"),
+]
+
+
+def short_time(sec: int) -> str:
+    h, m = divmod(max(0, int(sec)) // 60, 60)
+    return f"{h}ч" if h else f"{max(1, m)}м"
+
+
+def sections_select() -> discord.ui.Select:
+    opts = []
+    for key, label, desc in SECTIONS:
+        icon = BUTTONS[key][2] if key in BUTTONS else ""
+        emo = E(f"sd_{icon}") if icon else ""
+        try:
+            emo = discord.PartialEmoji.from_str(emo) if emo else None
+        except Exception:
+            emo = None
+        opts.append(discord.SelectOption(label=label, value=key, description=desc, emoji=emo))
+    return discord.ui.Select(custom_id="sd:sections", placeholder="Все разделы двора…", options=opts)
+
+
+async def dashboard(inter: discord.Interaction):
+    """Личное меню: сводка картинкой, быстрые кнопки с таймерами и список разделов."""
+    g, m = inter.guild_id, inter.user
+    s = await get_stats(g, m.id)
+    u = await bot.get_user(g, m.id)
+    now = int(time.time())
+    lvl, fem = s["level"], is_female(m)
+    path = await get_path(g, m.id)
+    if path:
+        sub = f"{rank_of(lvl, path, fem)} · {PATHS[path][1]} · {lvl} уровень"
+        nxt = next_rank(lvl, path, fem)
+        if nxt:
+            bar = ((lvl - (nxt[0] - RANK_STEP)) / RANK_STEP, f"До звания «{nxt[1]}»", f"{lvl} / {nxt[0]} ур.")
+        else:
+            bar = (1.0, "Высшее звание двора", f"{lvl} ур.")
+    else:
+        sub = f"Путь не выбран · {lvl} уровень"
+        have, need = s["xp"] - xp_for(lvl), xp_for(lvl + 1) - xp_for(lvl)
+        bar = (have / max(1, need), f"Опыт до {lvl + 1} уровня", f"{have} / {need}")
+    d_left = u["last_daily"] + DAY - now
+    w_left = u["last_work"] + WORK_COOLDOWN - now
+    tiles = [("coin", "Кошелёк", f"{s['coins']:,}".replace(",", " "), "монет", False)]
+    tiles.append(("gift", "Награда", "Готово", "забери сейчас", True) if d_left <= 0
+                 else ("gift", "Награда", fmt_time(d_left).replace(" мин", " м"), "до награды", False))
+    if not path:
+        tiles.append(("work", "Служба", "—", "сначала выбери путь", False))
+    elif w_left <= 0:
+        tiles.append(("work", "Служба", "Готово", f"жалованье {work_pay(lvl)}", True))
+    else:
+        tiles.append(("work", "Служба", fmt_time(w_left).replace(" мин", " м"),
+                      f"жалованье {work_pay(lvl)}", False))
+    mar = s["marriage"]
+    if mar:
+        other = mar["b"] if mar["a"] == m.id else mar["a"]
+        days = max(0, (now - (mar["since"] or now)) // 86400)
+        lines = [("couple", f"Пара: {await member_name(inter.guild, other)} · вместе {days} дн.")]
+    else:
+        lines = [("ring", "Пары пока нет — кольцо можно купить в разделе «Кольца»")]
+    todo = [(s.get(stat, 0) / need, name, s.get(stat, 0), need)
+            for k, name, _, _, stat, need in ACHIEVEMENTS if k not in s["ach"]]
+    ach = f"Достижения {len(s['ach'])} из {len(ACHIEVEMENTS)}"
+    if todo:
+        _, name, cur, need = max(todo)
+        ach += f" · ближайшее «{name}» {min(cur, need):,} / {need:,}".replace(",", " ")
+    lines.append(("trophy", ach))
+    quick = [btn("daily", "Награда" if d_left <= 0 else f"Награда · {short_time(d_left)}",
+                 _OK if d_left <= 0 else _G),
+             btn("work", "Работа" if (path and w_left <= 0) else
+                 ("Работа" if not path else f"Работа · {short_time(w_left)}"),
+                 _OK if (path and w_left <= 0) else _G),
+             btn("profile"), btn("balance")]
+    await send_panel(inter, "menu", f"Покои · {m.display_name}", subtitle=sub, icon="profile",
+                     bar=bar, tiles=tiles, lines=lines, rows=[quick, [sections_select()]], nav=False)
 
 
 async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
     if key == "menu":
-        await reply(inter, **menu_page())
+        await dashboard(inter)
     elif key == "profile":
         await profile.callback(inter, None)
     elif key == "work":
@@ -102,6 +194,10 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
             return await reply(inter, "Минимальная ставка — 10", rows=[["coin"]])
         s = "решка" if side.strip().lower().startswith("р") else "орёл"
         await coinflip.callback(inter, n, app_commands.Choice(name=s, value=s))
+    elif key == "duel":
+        if n < 10:
+            return await reply(inter, "Минимальная ставка — 10", rows=[["duel"]])
+        await duel.callback(inter, n, None)
 
 
 async def begin(inter: discord.Interaction):
@@ -171,6 +267,9 @@ async def on_interaction(inter: discord.Interaction):
     if not cid.startswith("sd:"):
         return
     key = cid[3:]
+    if key == "sections":   # выбор в списке «Все разделы»
+        vals = (inter.data or {}).get("values") or [""]
+        key = str(vals[0])
     if key not in BUTTONS and not key.startswith("mk:"):
         return
     try:
@@ -192,15 +291,14 @@ async def on_interaction(inter: discord.Interaction):
 
 
 def menu_page() -> dict:
+    """Общая панель меню (для канала): баннер, быстрые кнопки и список разделов."""
     e = discord.Embed(
         title="Двор Seikatsu — меню",
-        description=("Жми кнопки — своё меню меняется на месте, чужое открывает твоё.\n"
+        description=("Жми «Меню» — откроются твои покои: монеты, награда, служба и прогресс.\n"
                      "-# Командами остались действия с другим игроком: "
                      "`/перевод`, `/дуэль` и `/брак`."),
         color=RED)
-    emo = {k: E(k, d) for k, d in (("sd_profile", "👤"), ("sd_coin", "💰"),
-                                   ("sd_couple", "💞"), ("sd_inv", "🎭"))}
-    rows = [r.format(**emo) if isinstance(r, str) and "{" in r else r for r in MENU_ROWS]
+    rows = [["menu", "daily", "work", "profile", "balance"], [sections_select()]]
     kw = {"embed": e, "rows": rows, "nav": False}
     b = getattr(bot, "banners", {})
     path = b.get("menu") or b.get("help")
@@ -211,4 +309,4 @@ def menu_page() -> dict:
 
 @bot.tree.command(name="меню", description="Все действия кнопками")
 async def menu(inter: discord.Interaction):
-    await reply(inter, **menu_page())
+    await dashboard(inter)

@@ -4,7 +4,7 @@ import time
 
 import discord
 
-from .core import card_name, RED, bot, embed, fmt, fmt_time, reply, send_card
+from .core import card_name, RED, bot, embed, fmt, fmt_time, reply, send_card, send_result
 from .levels import (
     PATH_CHANGE_CD, PATHS, RANK_STEP, WORK_COOLDOWN, WORK_PAY, get_path, get_xp, is_female, level_of,
     rank_of, title_banner, titles,
@@ -74,17 +74,18 @@ async def work(inter: discord.Interaction):
     now = int(time.time())
     left = u["last_work"] + WORK_COOLDOWN - now
     if left > 0:
-        return await reply(inter, f"⏳ Следующая служба через **{fmt_time(left)}**",
-                           rows=[["daily", "profile"]])
+        return await send_result(inter, "work", "Служба ещё идёт",
+                                 f"Следующая — через {fmt_time(left)}",
+                                 "Пока можно забрать награду или заглянуть в казну.",
+                                 rows=[["daily", "balance"]])
     lvl = level_of(await get_xp(g, uid))
     pay = work_pay(lvl)
     await bot.set_field(g, uid, last_work=now)
     await bot.add(g, uid, 1, "works")
     await bot.add(g, uid, pay)
     title = rank_of(lvl, path, is_female(inter.user))
-    e = embed(f"{PATHS[path][0]} Служба окончена",
-              f"**{title}** получает жалованье: +**{fmt(pay)}**\n"
-              "Следующая служба — через 12 часов. Чем выше титул, тем больше жалованье.",
-              discord.Color.green())
-    await send_card(inter, e, title_banner(path, lvl, is_female(inter.user)) or "work",
-                    rows=[["daily", "balance"]])
+    await send_result(inter, title_banner(path, lvl, is_female(inter.user)) or "work",
+                      f"{PATHS[path][0]} Служба окончена",
+                      f"{title} получает жалованье: +{fmt(pay)}",
+                      "Следующая — через 12 ч. Чем выше титул, тем больше жалованье.",
+                      rows=[["daily", "balance"]])

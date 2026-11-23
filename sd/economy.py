@@ -6,9 +6,10 @@ import discord
 from discord import app_commands
 
 import art
-from .core import DAILY_REWARD, bot, embed, fmt, fmt_time, iconize, member_name, reply, send_card
+from .core import DAILY_REWARD, bot, btn, embed, fmt, fmt_time, iconize, member_name, reply, send_card
+from .core import send_panel, send_result, _OK, _G
 from .achievements import ACHIEVEMENTS, get_stats, unlock
-from .levels import PATHS, get_path, is_female, next_rank, rank_of, title_banner, work_pay, xp_for
+from .levels import PATHS, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, title_banner, work_pay, xp_for
 
 DAY = 24 * 3600
 
@@ -19,9 +20,33 @@ DAY = 24 * 3600
 async def balance(inter: discord.Interaction, участник: discord.Member | None = None):
     m = участник or inter.user
     u = await bot.get_user(inter.guild_id, m.id)
-    e = embed(f"Баланс {m.display_name}", f"## {fmt(u['balance'])}")
-    e.set_thumbnail(url=m.display_avatar.url)
-    await send_card(inter, e, "balance", rows=[["daily", "coin"]])
+    coins = f"{u['balance']:,}".replace(",", " ")
+    if m.id != inter.user.id:   # чужой кошелёк — только сумма
+        return await send_panel(inter, "balance", f"Казна · {m.display_name}",
+                                tiles=[("coin", "Кошелёк", coins, "монет", False)],
+                                rows=[["balance", "coin"]])
+    now = int(time.time())
+    d_left = u["last_daily"] + DAY - now
+    w_left = u["last_work"] + WORK_COOLDOWN - now
+    path = await get_path(inter.guild_id, m.id)
+    from .achievements import get_stats
+    lvl = (await get_stats(inter.guild_id, m.id))["level"]
+    pay = work_pay(lvl)
+    tiles = [("coin", "Кошелёк", coins, "монет", False),
+             ("gift", "Награда", f"+{DAILY_REWARD}",
+              "готово" if d_left <= 0 else f"через {fmt_time(d_left)}", d_left <= 0)]
+    if path:
+        tiles.append(("work", "Служба", f"+{pay}",
+                      "готово" if w_left <= 0 else f"через {fmt_time(w_left)}", w_left <= 0))
+    else:
+        tiles.append(("work", "Служба", "—", "сначала выбери путь", False))
+    streak = u["streak"] if now - u["last_daily"] < 2 * DAY else 0
+    lines = [("hourglass", f"Серия наград: {streak} дн. подряд" +
+              (" · на 7-й день — «Завсегдатай»" if streak < 7 else ""))]
+    rows = [[btn("daily", "Забрать награду" if d_left <= 0 else "Награда",
+                 _OK if d_left <= 0 else _G), "coin", "duel"]]
+    await send_panel(inter, "balance", "Казна", subtitle="Твои монеты и что можно сделать сейчас",
+                     icon="coin", tiles=tiles, lines=lines, rows=rows)
 
 
 @bot.tree.command(name="награда", description=f"Ежедневная награда — {DAILY_REWARD} монет раз в 24 часа")
@@ -31,15 +56,18 @@ async def daily(inter: discord.Interaction):
     now = int(time.time())
     left = u["last_daily"] + DAY - now
     if left > 0:
-        return await reply(inter, f"⏳ Награду можно забрать через **{fmt_time(left)}**",
-                           rows=[["balance"]])
+        return await send_result(inter, "daily", "Награда ещё не готова",
+                                 f"Можно забрать через {fmt_time(left)}",
+                                 "Пока можно сходить на службу или сыграть в монетку.",
+                                 rows=[["work", "coin", "balance"]])
     streak = u["streak"] + 1 if now - u["last_daily"] < 2 * DAY else 1
     await bot.set_field(g, uid, last_daily=now, streak=streak)
     await bot.add(g, uid, DAILY_REWARD)
-    e = embed("🎁 Награда получена",
-              f"+**{fmt(DAILY_REWARD)}**\nДней подряд: **{streak}**\n"
-              f"Следующая — через 24 часа.", discord.Color.green())
-    await send_card(inter, e, "daily", rows=[["balance", "coin"]])
+    left_coins = u["balance"] + DAILY_REWARD
+    await send_result(inter, "daily", "🎁 Награда получена",
+                      f"+{fmt(DAILY_REWARD)} · серия {streak} дн.",
+                      f"В кошельке: {left_coins:,} · следующая через 24 ч".replace(",", " "),
+                      rows=[["work", "coin", "balance"]])
 
 
 # ═════════ Перевод ═════════
@@ -64,10 +92,9 @@ async def transfer(inter: discord.Interaction, участник: discord.Member,
     await bot.add(g, uid, -сумма)
     await bot.add(g, m.id, сумма)
     left = u["balance"] - сумма
-    e = embed("💰 Перевод отправлен",
-              f"{m.mention} получает **{fmt(сумма)}**\nОсталось у тебя: **{fmt(left)}**",
-              discord.Color.green())
-    await send_card(inter, e, "balance", rows=[["balance", "profile"]])
+    await send_result(inter, "balance", "💰 Перевод отправлен",
+                      f"{m.display_name} получает {fmt(сумма)}",
+                      f"Осталось у тебя: {left:,}".replace(",", " "), rows=[["balance"]])
     # получатель узнаёт о переводе в канале
     try:
         await inter.channel.send(

@@ -128,8 +128,9 @@ BUTTONS = {
     "rolecreate": ("Создать роль", "✨", "skill", _OK),
     "help": ("Помощь", "❓", "help", _G),
     "roomname": ("Название румы", "🏷️", "tag", _G),
+    "duel": ("Дуэль", "⚔️", "duel", _G),
 }
-NAV = ["menu", "profile", "balance", "daily", "couple"]
+NAV = ["menu", "profile", "couple"]
 
 
 async def member_name(guild: discord.Guild | None, uid: int) -> str:
@@ -222,15 +223,19 @@ def _embed_text_raw(e: discord.Embed | None, content: str | None) -> str:
     return "\n".join(parts)[:3900]
 
 
-def build_page(content=None, embed=None, image=None, rows=None, nav=True):
-    """Широкая карточка: баннер, текст и кнопки внутри одной рамки."""
+def build_page(content=None, embed=None, image=None, rows=None, nav=True, thumb=None):
+    """Широкая карточка: баннер (или портрет справа), текст и кнопки внутри одной рамки."""
     ui = discord.ui
     items, files = [], []
     if image:
         files.append(_file(image))
         items.append(ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{image[0]}")))
     text = _embed_text(embed, content)
-    thumb = embed.thumbnail.url if embed is not None and embed.thumbnail else None
+    if thumb:          # маленький портрет персонажа справа от текста
+        files.append(_file(thumb))
+        thumb = f"attachment://{thumb[0]}"
+    else:
+        thumb = embed.thumbnail.url if embed is not None and embed.thumbnail else None
     if text and thumb:
         items.append(ui.Section(ui.TextDisplay(text), accessory=ui.Thumbnail(thumb)))
     elif text:
@@ -258,13 +263,18 @@ def build_page(content=None, embed=None, image=None, rows=None, nav=True):
     return view, files
 
 
-def build_classic(content=None, embed=None, image=None, rows=None, nav=True) -> dict:
+def build_classic(content=None, embed=None, image=None, rows=None, nav=True, thumb=None) -> dict:
     """Запасной вид (обычный эмбед), если широкие карточки недоступны."""
+    if embed is None and thumb and content:
+        embed, content = discord.Embed(description=iconize(str(content)), color=RED), None
     kw = {"content": content, "embed": embed, "attachments": []}
     if image:
         kw["attachments"] = [_file(image)]
         if embed is not None:
             embed.set_image(url=f"attachment://{image[0]}")
+    if thumb and embed is not None:
+        kw["attachments"].append(_file(thumb))
+        embed.set_thumbnail(url=f"attachment://{thumb[0]}")
     view = discord.ui.View(timeout=None)
     lines = [r for r in (rows or []) if not isinstance(r, str)][:4]
     if nav:
@@ -299,24 +309,43 @@ async def _deliver(inter: discord.Interaction, kw: dict, ephemeral: bool):
     return await inter.response.send_message(ephemeral=ephemeral, **kw)
 
 
+def char_thumb(key: str | None):
+    """Портрет персонажа (chars/<key>.png) для короткого ответа: (имя файла, байты) или None."""
+    path = getattr(bot, "banners", {}).get(key or "")
+    if not path:
+        return None
+    char = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(path))), "chars",
+                        os.path.splitext(os.path.basename(path))[0] + ".png")
+    try:
+        data = art.thumb(char)
+    except Exception as ex:
+        print("Портрет не нарисован:", key, repr(ex))
+        return None
+    return ("portrait.png", data) if data else None
+
+
 async def reply(inter: discord.Interaction, content=None, *, embed=None, image=None,
-                rows=None, nav=True, ephemeral=False, allowed_mentions=None, key="deny"):
+                rows=None, nav=True, ephemeral=False, allowed_mentions=None, key="deny",
+                thumb=None):
     """Ответ бота (виден всем в канале). Кнопки ведут на другие страницы.
 
-    key — баннер для ответа без своей картинки (по умолчанию «отказ»), None — без баннера.
+    key — персонаж для ответа без своей картинки (по умолчанию «стража»): маленький портрет
+    справа от текста. None — без картинки. Большой баннер — через image / send_card.
     """
-    if image is None and key:
-        path = getattr(bot, "banners", {}).get(key)
-        if path and os.path.exists(path):
-            image = (card_name(path), path)
+    if image is None and thumb is None and key:
+        thumb = char_thumb(key)
+        if thumb is None:   # нет вырезанного персонажа — как раньше, баннером
+            path = getattr(bot, "banners", {}).get(key)
+            if path and os.path.exists(path):
+                image = (card_name(path), path)
     extra = {"allowed_mentions": allowed_mentions} if allowed_mentions is not None else {}
     if V2:
         try:
-            view, files = build_page(content, embed, image, rows, nav)
+            view, files = build_page(content, embed, image, rows, nav, thumb)
             return await _deliver(inter, {"view": view, "attachments": files, **extra}, ephemeral)
         except Exception as ex:
             print("Карточка не отправлена, пробую обычный вид:", repr(ex))
-    kw = build_classic(content, embed, image, rows, nav)
+    kw = build_classic(content, embed, image, rows, nav, thumb)
     return await _deliver(inter, {**kw, **extra}, ephemeral)
 
 
@@ -336,6 +365,39 @@ async def send_card(inter: discord.Interaction, e: discord.Embed, key: str, **kw
     return await reply(inter, embed=e, **kw)
 
 
+async def send_panel(inter: discord.Interaction, key: str, title: str, *, subtitle="", icon="",
+                     bar=None, tiles=(), lines=(), rows=None, nav=True, fallback=None):
+    """Карточка-картинка: баннер, плитки с цифрами, строки (см. art.panel_card)."""
+    path = getattr(bot, "banners", {}).get(key)
+    try:
+        img = await asyncio.to_thread(art.panel_card, path, title, subtitle, icon, bar,
+                                      list(tiles), list(lines))
+        return await reply(inter, image=("panel.jpg", img), rows=rows, nav=nav)
+    except Exception as ex:
+        print("Панель не нарисована:", key, repr(ex))
+    if fallback is None:
+        fallback = embed(title, "\n".join([subtitle] + [f"**{t[1]}:** {t[2]}" for t in tiles]
+                                          + [l[1] for l in lines]))
+    return await send_card(inter, fallback, key, rows=rows, nav=nav)
+
+
+async def send_result(inter: discord.Interaction, key: str, title: str, text: str = "",
+                      note: str = "", rows=None, nav=True, **kw):
+    """Короткий ответ: заголовок, пара строк и портрет персонажа справа."""
+    body = f"## {title}" + (f"\n**{text}**" if text else "") + (f"\n-# {note}" if note else "")
+    return await reply(inter, body, rows=rows, nav=nav, key=key, **kw)
+
+
+def btn(key: str, label: str | None = None, style=None) -> discord.ui.Button:
+    """Кнопка из BUTTONS со своей подписью/цветом (например, с таймером)."""
+    b = make_button(key)
+    if label is not None:
+        b.label = label
+    if style is not None:
+        b.style = style
+    return b
+
+
 async def send_public(inter: discord.Interaction, e: discord.Embed, key: str, **kw):
     """Сообщение, которое видят все (дуэли и ограбления)."""
     path = getattr(bot, "banners", {}).get(key)
@@ -347,10 +409,11 @@ async def send_public(inter: discord.Interaction, e: discord.Embed, key: str, **
     except discord.HTTPException:
         await reply(inter, "Не могу написать в этот канал — у бота нет прав")
         return None
-    try:
-        await inter.delete_original_response()
-    except discord.HTTPException:
-        pass
+    if not inter.extras.get("sd_edit"):   # своё меню не удаляем, только «думает…»
+        try:
+            await inter.delete_original_response()
+        except discord.HTTPException:
+            pass
     return msg
 
 
@@ -387,10 +450,6 @@ class EconomyBot(commands.Bot):
             await self.db.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
         except Exception:
             pass  # колонка уже есть
-        try:
-            await self.db.execute("ALTER TABLE marriages ADD COLUMN room_name TEXT")
-        except Exception:
-            pass
         for col in ("cls TEXT", "cls_xp INTEGER DEFAULT 0", "cls_changed INTEGER DEFAULT 0",
                     "skill_ready INTEGER DEFAULT 0", "skill_active INTEGER DEFAULT 0",
                     "msgs INTEGER DEFAULT 0", "voice_min INTEGER DEFAULT 0",
@@ -417,6 +476,10 @@ class EconomyBot(commands.Bot):
             guild_id INTEGER, user_id INTEGER, ring TEXT, qty INTEGER DEFAULT 0,
             PRIMARY KEY(guild_id, user_id, ring));
         """)
+        try:   # после создания таблицы marriages (на новой базе её раньше нет)
+            await self.db.execute("ALTER TABLE marriages ADD COLUMN room_name TEXT")
+        except Exception:
+            pass  # колонка уже есть
         # банка больше нет: всё, что лежало в нём, переходит на баланс
         await self.db.execute("UPDATE users SET balance=balance+bank, bank=0 WHERE bank>0")
         await self.db.commit()
