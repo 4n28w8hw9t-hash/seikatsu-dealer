@@ -80,17 +80,21 @@ async def after_action(inter: discord.Interaction):
             print("Ошибка после действия:", repr(ex))
 
 
+STAFF_COMMANDS = {"админ"}
+
+
 class DeferTree(app_commands.CommandTree):
     """Антиспам, мгновенное личное подтверждение и очередь для операций с монетами."""
     async def _call(self, interaction: discord.Interaction):
         if interaction.type == discord.InteractionType.application_command:
-            if await wrong_channel(interaction):
+            staff = (interaction.data or {}).get("name") in STAFF_COMMANDS   # админ-панель — скрыто и в любом канале
+            if not staff and await wrong_channel(interaction):
                 return
             try:
                 if too_fast(interaction.user.id):
                     return await interaction.response.send_message(
                         "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
-                await interaction.response.defer(thinking=True)
+                await interaction.response.defer(thinking=True, ephemeral=staff)
             except discord.HTTPException:
                 pass
         async with ECON_LOCK:
