@@ -444,3 +444,121 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
     out = _io.BytesIO()
     img.save(out, "PNG")
     return out.getvalue()
+
+
+# ───────── карточки-панели (меню, казна) ─────────
+_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+P_TILE = (24, 8, 11)
+
+
+def _icon(name, size):
+    p = os.path.join(_ICON_DIR, f"{name}.png")
+    if not name or not os.path.exists(p):
+        return None
+    return Image.open(p).convert("RGBA").resize((size, size), Image.LANCZOS)
+
+
+def panel_card(banner_path, title: str, subtitle: str = "", icon: str = "", bar=None,
+               tiles=(), lines=(), W: int = 1200) -> bytes:
+    """Баннер сверху, ниже — заголовок, шкала, плитки с цифрами и строки.
+
+    bar = (доля 0..1, подпись слева, подпись справа)
+    tiles = [(иконка, подпись, значение, пояснение, готово: bool)]
+    lines = [(иконка, текст)]
+    """
+    pad = 44
+    ban = None
+    if banner_path and os.path.exists(banner_path):
+        ban = Image.open(banner_path).convert("RGB")
+        ban = ban.resize((W, round(ban.height * W / ban.width)), Image.LANCZOS)
+    top = ban.height if ban else 0
+    H = top + 36 + 62 + (40 if subtitle else 0) + (62 if bar else 0) \
+        + (150 if tiles else 0) + 48 * len(lines) + 30
+    img = _pbg(W, H, cx=0.5)
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, top, W, H], fill=(16, 5, 8))
+    if ban:
+        img.paste(ban, (0, 0))
+        d.line([(0, top), (W, top)], fill=P_GOLD_D, width=2)
+    y = top + 32
+    x = pad
+    ic = _icon(icon, 48)
+    if ic:
+        img.paste(ic, (x, y + 4), ic)
+        x += 62
+    t, f = _pfit(d, title, "sc", 58, W - pad - x, 26)
+    _shadow_text(d, (x, y - 8), t, f, P_GOLD)
+    y += 62
+    if subtitle:
+        s, f = _pfit(d, subtitle, "sc6", 30, W - 2 * pad, 16)
+        _t(d, (pad, y), s, f, P_MUTED)
+        y += 40
+    if bar:
+        frac, left, right = bar
+        f = _pfont("sc6", 24)
+        _t(d, (pad, y), left, f, P_CREAM)
+        _t(d, (W - pad - _tl(d, right, f), y), right, f, P_MUTED)
+        y += 32
+        d.rounded_rectangle([pad, y, W - pad, y + 16], radius=8, fill=(8, 2, 4), outline=P_GOLD_D)
+        fill = round((W - 2 * pad - 6) * max(0.0, min(1.0, frac)))
+        if fill > 6:
+            d.rounded_rectangle([pad + 3, y + 3, pad + 3 + fill, y + 13], radius=5, fill=P_GOLD)
+        y += 30
+    if tiles:
+        y += 8
+        n, gap = len(tiles), 18
+        cw = (W - 2 * pad - gap * (n - 1)) / n
+        for i, (tic, label, value, note, ready) in enumerate(tiles):
+            cx = pad + i * (cw + gap)
+            d.rounded_rectangle([cx, y, cx + cw, y + 128], radius=12, fill=P_TILE,
+                                outline=P_GOLD if ready else P_GOLD_D, width=2 if ready else 1)
+            ti = _icon(tic, 34)
+            lx = cx + 18
+            if ti:
+                img.paste(ti, (round(lx), y + 14), ti)
+                lx += 44
+            lab, f = _pfit(d, label.upper(), "sc6", 22, cx + cw - lx - 12, 12)
+            _t(d, (lx, y + 18), lab, f, P_MUTED)
+            val, f = _pfit(d, str(value), "text", 44, cw - 36, 18)
+            _t(d, (cx + 18, y + 52), val, f, P_CREAM)
+            if note:
+                nt, f = _pfit(d, note, "sc6", 21, cw - 36, 12)
+                _t(d, (cx + 18, y + 98), nt, f, P_GOLD if ready else P_MUTED)
+        y += 150
+    for lic, text in lines:
+        lx = pad
+        li = _icon(lic, 32)
+        if li:
+            img.paste(li, (lx, y + 2), li)
+            lx += 46
+        tx, f = _pfit(d, text, "text", 30, W - pad - lx, 16)
+        _t(d, (lx, y), tx, f, P_CREAM)
+        y += 48
+    _pframe(img)
+    out = _io.BytesIO()
+    img.save(out, "JPEG", quality=90)
+    return out.getvalue()
+
+
+_THUMBS = {}
+
+
+def thumb(char_path: str, size: int = 256) -> bytes | None:
+    """Квадратный портрет персонажа для коротких ответов (кешируется)."""
+    if char_path in _THUMBS:
+        return _THUMBS[char_path]
+    if not char_path or not os.path.exists(char_path):
+        return None
+    ch = Image.open(char_path).convert("RGBA")
+    # верхняя часть фигуры: голова и плечи
+    side = min(ch.width, round(ch.height * 0.62))
+    x0 = max(0, (ch.width - side) // 2)
+    face = ch.crop((x0, 0, x0 + side, side)).resize((size, size), Image.LANCZOS)
+    bg = _pbg(size, size, cx=0.5).convert("RGBA")
+    bg.alpha_composite(face)
+    d = ImageDraw.Draw(bg)
+    d.rectangle([3, 3, size - 4, size - 4], outline=P_GOLD_D, width=3)
+    out = _io.BytesIO()
+    bg.convert("RGB").save(out, "PNG")
+    _THUMBS[char_path] = out.getvalue()
+    return _THUMBS[char_path]
