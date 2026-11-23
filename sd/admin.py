@@ -87,9 +87,14 @@ async def on_app_error(inter: discord.Interaction, error: app_commands.AppComman
 
 
 # ═════════ Админ-панель /админ (по ролям) ═════════
+import asyncio  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
 import time  # noqa: E402
 
-from .core import ECON_LOCK  # noqa: E402
+import art  # noqa: E402
+
+from .core import E, ECON_LOCK  # noqa: E402
 from .levels import PATHS, get_path, get_xp, level_of, rank_of, is_female, xp_for  # noqa: E402
 from .marriage import RINGS, get_rings  # noqa: E402
 
@@ -102,7 +107,19 @@ def is_staff(member) -> bool:
     return any(r.id in ADMIN_ROLES for r in getattr(member, "roles", []))
 
 
-async def staff_card(guild: discord.Guild, m: discord.Member, note: str = "") -> discord.Embed:
+def em(name: str, fallback: str):
+    """Своя иконка бота sd_<name> для кнопки, иначе обычный эмодзи."""
+    custom = E(f"sd_{name}")
+    if custom:
+        try:
+            return discord.PartialEmoji.from_str(custom)
+        except Exception:
+            pass
+    return fallback
+
+
+async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
+    """Карточка участника для админ-панели: (эмбед, файл-картинка)."""
     g = guild.id
     u = await bot.get_user(g, m.id)
     xp = await get_xp(g, m.id)
@@ -111,21 +128,42 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = "") ->
     title = rank_of(lvl, path, is_female(m))
     rings = await get_rings(g, m.id)
     now = int(time.time())
-    daily = "готова" if now - u["last_daily"] >= 86400 else "уже получена"
-    work = "можно" if now - u["last_work"] >= 12 * 3600 else "на перерыве"
-    e = discord.Embed(title=f"🛠️ Админ-панель · {m.display_name}", color=discord.Color.dark_red())
-    e.set_thumbnail(url=m.display_avatar.url)
-    e.add_field(name="💰 Монеты", value=f"**{fmt(u['balance'])}**")
-    e.add_field(name="⭐ Уровень", value=f"**{lvl}** · {fmt(xp)} опыта")
-    e.add_field(name="👑 Путь", value=(f"{PATHS[path][1]} · {title}" if path else "не выбран"))
-    e.add_field(name="🎁 Награда", value=f"{daily} · серия {u['streak']}")
-    e.add_field(name="⚒️ Работа", value=work)
-    e.add_field(name="💍 Кольца",
-                value=", ".join(f"{RINGS[k][0].split()[0]} ×{v}" for k, v in rings.items() if v) or "нет")
+    daily_ok = now - u["last_daily"] >= 86400
+    work_ok = now - u["last_work"] >= 12 * 3600
+    lo, hi = xp_for(lvl), xp_for(lvl + 1)
+    ring_n = sum(rings.values())
+    ring_note = " · ".join(f"{RINGS[k][0].split()[0][:3].lower()} {v}" for k, v in rings.items() if v)
+    tiles = [("coin", "Монеты", fmt(u["balance"]), "кошелёк", True),
+             ("top", "Уровень", str(lvl), f"{fmt(xp)} опыта", True),
+             (path or "path", "Путь", PATHS[path][1] if path else "—", title or "не выбран", bool(path)),
+             ("ring", "Кольца", str(ring_n), ring_note or "нет колец", ring_n > 0)]
+    lines = [("gift", f"Награда: {'готова' if daily_ok else 'уже получена'} · серия {u['streak']}"),
+             ("work", f"Работа: {'можно идти' if work_ok else 'на перерыве'}")]
     if note:
-        e.description = f"✅ {note}"
-    e.set_footer(text="Изменения сразу сохраняются. Все действия пишутся в лог бота.")
-    return e
+        lines.append(("win", note))
+    try:
+        avatar = await m.display_avatar.replace(size=128, format="png").read()
+    except Exception:
+        avatar = None
+    bn = getattr(bot, "banners", {})
+    banner = bn.get("admin") or bn.get("top")
+    try:
+        img = await asyncio.to_thread(
+            art.panel_card, banner, m.display_name, f"@{m.name} · канцелярия двора", "adm_seal",
+            ((xp - lo) / max(hi - lo, 1), f"{lvl} уровень", f"до {lvl + 1}: {fmt(hi - xp)} опыта"),
+            tiles, lines, 1200, avatar)
+        e = discord.Embed(color=discord.Color.from_rgb(150, 30, 40))
+        e.set_image(url="attachment://staff.jpg")
+        e.set_footer(text="Изменения сохраняются сразу · все действия пишутся в журнал")
+        return e, discord.File(io.BytesIO(img), filename="staff.jpg")
+    except Exception as ex:   # картинка не нарисовалась — простой текст
+        print("Админ-карточка не нарисована:", repr(ex))
+        e = discord.Embed(title=f"🛠️ {m.display_name}", color=discord.Color.dark_red(),
+                          description=(f"✅ {note}\n" if note else "") +
+                          f"💰 **{fmt(u['balance'])}** · ⭐ **{lvl}** ур. ({fmt(xp)} опыта)\n"
+                          f"👑 {PATHS[path][1] + ' · ' + title if path else 'путь не выбран'} · 💍 {ring_n}")
+        e.set_thumbnail(url=m.display_avatar.url)
+        return e, None
 
 
 def log(inter: discord.Interaction, m: discord.Member, what: str):
@@ -156,6 +194,19 @@ class StaffView(discord.ui.View):
             for item in list(self.children):
                 if not isinstance(item, discord.ui.UserSelect):
                     self.remove_item(item)
+        icons = {"Монеты ±": ("adm_plus", "💰"), "Задать баланс": ("adm_scales", "🏦"),
+                 "Уровень": ("adm_level", "⭐"), "Опыт ±": ("adm_xp", "✨"),
+                 "Обновить": ("adm_log", "🔄"), "Обнулить участника": ("adm_burn", "♻️")}
+        opt_icons = {"path:noble": "noble", "path:faith": "faith", "path:none": "cancel",
+                     "ring:silver": "ring_silver", "ring:gold": "ring_gold", "ring:ruby": "ring_ruby",
+                     "cd": "adm_cd", "streak": "gift"}
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) and item.label in icons:
+                item.emoji = em(*icons[item.label])
+            elif isinstance(item, discord.ui.Select) and not isinstance(item, discord.ui.UserSelect):
+                for o in item.options:
+                    if o.value in opt_icons:
+                        o.emoji = em(opt_icons[o.value], o.emoji)
 
     async def interaction_check(self, inter: discord.Interaction) -> bool:
         if inter.user.id != self.owner_id or not is_staff(inter.user):
@@ -164,9 +215,11 @@ class StaffView(discord.ui.View):
         return True
 
     async def show(self, inter: discord.Interaction, note: str = ""):
-        view = StaffView(self.owner_id, self.member)
-        await inter.response.edit_message(embed=await staff_card(inter.guild, self.member, note),
-                                          view=view)
+        if not inter.response.is_done():
+            await inter.response.defer()
+        e, f = await staff_card(inter.guild, self.member, note)
+        await inter.edit_original_response(embed=e, attachments=[f] if f else [],
+                                           view=StaffView(self.owner_id, self.member))
 
     async def apply(self, inter: discord.Interaction, kind: str, n: int):
         g, m = inter.guild_id, self.member
@@ -301,10 +354,16 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
         участник = None
     view = StaffView(inter.user.id, участник)
     if участник:
-        e = await staff_card(inter.guild, участник)
+        e, f = await staff_card(inter.guild, участник)
     else:
-        e = discord.Embed(title="🛠️ Админ-панель",
-                          description="Выбери участника в списке ниже — откроется его карточка "
-                                      "с кнопками: монеты, уровень, опыт, путь, кольца, сбросы.",
-                          color=discord.Color.dark_red())
-    await inter.followup.send(embed=e, view=view, ephemeral=True)
+        bn = getattr(bot, "banners", {})
+        path = bn.get("admin") or bn.get("top")
+        f = discord.File(path, filename="staff.jpg") if path and os.path.exists(path) else None
+        e = discord.Embed(title="Канцелярия двора",
+                          description="Выбери участника в списке ниже — откроется его карточка.\n"
+                                      "-# Монеты · уровень · опыт · путь · кольца · сбросы",
+                          color=discord.Color.from_rgb(150, 30, 40))
+        if f:
+            e.set_image(url="attachment://staff.jpg")
+    kw = {"file": f} if f else {}
+    await inter.followup.send(embed=e, view=view, ephemeral=True, **kw)
