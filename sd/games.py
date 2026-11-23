@@ -24,13 +24,13 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         await bot.add(g, uid, ставка)
         await bot.add(g, uid, 1, "flip_wins")
         msg, col = f"Выпал **{result}** — ты забираешь **{fmt(ставка * 2)}**! 🎉", discord.Color.green()
-        key = "win"
+        key = "coinflip"   # шут с монеткой — он же баннер победы
     else:
         await bot.add(g, uid, -ставка)
         msg, col = f"Выпал **{result}** — ставка **{fmt(ставка)}** сгорает 😢", discord.Color.red()
-        key = "lose"
+        key = "flip_lose"
     if key not in getattr(bot, "banners", {}):
-        key = "coinflip"
+        key = "lose" if "lose" in getattr(bot, "banners", {}) else "coinflip"
     await send_card(inter, embed("🪙 Монетка", msg, col), key, rows=[["coin", "balance"]])
 
 
@@ -84,8 +84,9 @@ class DuelView(discord.ui.View):
                       discord.Color.green())
         e2 = embed("⚔️ Дуэль", f"😢 {lose.mention} проигрывает **{fmt(self.bet)}**", discord.Color.red())
         files = []
-        for key, em in (("win", e), ("lose", e2)):   # баннер победы и баннер поражения
-            path = getattr(bot, "banners", {}).get(key)
+        for key, em in (("win", e), ("lose", e2)):   # баннеры рыцаря: победа и поражение
+            bn = getattr(bot, "banners", {})
+            path = bn.get("duel_" + key) or bn.get(key)
             if path and os.path.exists(path):
                 name = key + os.path.splitext(path)[1].lower()
                 em.set_image(url=f"attachment://{name}")
