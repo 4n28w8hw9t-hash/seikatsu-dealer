@@ -107,6 +107,11 @@ def is_staff(member) -> bool:
     return any(r.id in ADMIN_ROLES for r in getattr(member, "roles", []))
 
 
+def num(n: int) -> str:
+    """Число с пробелами, без значка монеты (для картинки)."""
+    return f"{int(n):,}".replace(",", " ")
+
+
 def em(name: str, fallback: str):
     """Своя иконка бота sd_<name> для кнопки, иначе обычный эмодзи."""
     custom = E(f"sd_{name}")
@@ -133,8 +138,8 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
     lo, hi = xp_for(lvl), xp_for(lvl + 1)
     ring_n = sum(rings.values())
     ring_note = " · ".join(f"{RINGS[k][0].split()[0][:3].lower()} {v}" for k, v in rings.items() if v)
-    tiles = [("coin", "Монеты", fmt(u["balance"]), "кошелёк", True),
-             ("top", "Уровень", str(lvl), f"{fmt(xp)} опыта", True),
+    tiles = [("coin", "Монеты", num(u["balance"]), "кошелёк", True),
+             ("top", "Уровень", str(lvl), f"{num(xp)} опыта", True),
              (path or "path", "Путь", PATHS[path][1] if path else "—", title or "не выбран", bool(path)),
              ("ring", "Кольца", str(ring_n), ring_note or "нет колец", ring_n > 0)]
     lines = [("gift", f"Награда: {'готова' if daily_ok else 'уже получена'} · серия {u['streak']}"),
@@ -150,7 +155,7 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
     try:
         img = await asyncio.to_thread(
             art.panel_card, banner, m.display_name, f"@{m.name} · канцелярия двора", "adm_seal",
-            ((xp - lo) / max(hi - lo, 1), f"{lvl} уровень", f"до {lvl + 1}: {fmt(hi - xp)} опыта"),
+            ((xp - lo) / max(hi - lo, 1), f"{lvl} уровень", f"до {lvl + 1}: {num(hi - xp)} опыта"),
             tiles, lines, 1200, avatar)
         e = discord.Embed(color=discord.Color.from_rgb(150, 30, 40))
         e.set_image(url="attachment://staff.jpg")
@@ -160,7 +165,7 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
         print("Админ-карточка не нарисована:", repr(ex))
         e = discord.Embed(title=f"🛠️ {m.display_name}", color=discord.Color.dark_red(),
                           description=(f"✅ {note}\n" if note else "") +
-                          f"💰 **{fmt(u['balance'])}** · ⭐ **{lvl}** ур. ({fmt(xp)} опыта)\n"
+                          f"💰 **{num(u['balance'])}** · ⭐ **{lvl}** ур. ({num(xp)} опыта)\n"
                           f"👑 {PATHS[path][1] + ' · ' + title if path else 'путь не выбран'} · 💍 {ring_n}")
         e.set_thumbnail(url=m.display_avatar.url)
         return e, None
@@ -226,11 +231,11 @@ class StaffView(discord.ui.View):
         async with ECON_LOCK:
             if kind == "coins_add":
                 await bot.add(g, m.id, n)
-                note = f"{'Выдано' if n >= 0 else 'Забрано'} {fmt(abs(n))} монет"
+                note = f"{'Выдано' if n >= 0 else 'Забрано'} {num(abs(n))} монет"
             elif kind == "coins_set":
                 await bot.get_user(g, m.id)
                 await bot.set_field(g, m.id, balance=max(n, 0))
-                note = f"Баланс теперь {fmt(max(n, 0))}"
+                note = f"Баланс теперь {num(max(n, 0))}"
             elif kind == "level_set":
                 n = max(1, min(n, 200))
                 await bot.get_user(g, m.id)
@@ -239,7 +244,7 @@ class StaffView(discord.ui.View):
             elif kind == "xp_add":
                 xp = await get_xp(g, m.id)
                 await bot.set_field(g, m.id, xp=max(xp + n, 0))
-                note = f"Опыт {'+' if n >= 0 else '−'}{fmt(abs(n))}"
+                note = f"Опыт {'+' if n >= 0 else '−'}{num(abs(n))}"
             else:
                 return
         log(inter, m, note)
