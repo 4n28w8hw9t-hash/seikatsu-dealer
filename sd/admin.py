@@ -375,7 +375,8 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
 
 
 # ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════
-DIVIDERS = [1574467661067194410, 1574469695627591700, 1365250956710772756]   # staff, roles, member
+DIVIDERS = [1574467661067194410, 1574469695627591700]   # staff, roles
+MEMBER_ROLE = 1365250956710772756   # member: у всех всегда, выдаётся при входе
 WRONG_DIVIDER = 1365250956710772756   # по ошибке считалась разделителем 23.11 — откатываем
 
 
@@ -388,7 +389,7 @@ def _sections(guild: discord.Guild) -> dict[int, set[int]]:
         low = divs[i + 1].position if i + 1 < len(divs) else 0
         out[d.id] = {r.id for r in guild.roles
                      if low < r.position < d.position and not r.is_default()
-                     and not r.is_bot_managed() and not r.is_integration()}
+                     and r.id != MEMBER_ROLE and not r.is_bot_managed() and not r.is_integration()}
     return out
 
 
@@ -398,6 +399,8 @@ async def sync_dividers(member: discord.Member, sections=None):
     sections = sections or _sections(member.guild)
     have = {r.id for r in member.roles}
     add, remove = [], []
+    if member.guild.get_role(MEMBER_ROLE) and MEMBER_ROLE not in have:
+        add.append(discord.Object(id=MEMBER_ROLE))
     for did, ids in sections.items():
         need = bool(have & ids)
         if need and did not in have:
@@ -411,6 +414,11 @@ async def sync_dividers(member: discord.Member, sections=None):
             await member.remove_roles(*remove, reason="Разделитель: в разделе нет ролей")
     except discord.HTTPException as ex:
         print("Разделитель не выдан:", member, repr(ex))
+
+
+@bot.listen("on_member_join")
+async def _member_join(member: discord.Member):
+    await sync_dividers(member)
 
 
 @bot.listen("on_member_update")
