@@ -482,22 +482,21 @@ async def _divider_startup():
 RULES_CHANNEL = 1370852188611416064
 CRIMSON = discord.Color.from_rgb(150, 30, 40)
 RULES = [
-    ("Ⅰ · Верность двору", "Запрещены деструктивные действия по отношению к серверу",
-     "оскорбление участников, неконструктивная критика, мошеннические действия, призыв покинуть сервер"),
-    ("Ⅱ · Достоинство", "Запрещено неадекватное поведение в любых его проявлениях",
-     "оскорбления, провокации, агрессия, троллинг, крики и т. д."),
-    ("Ⅲ · Тишина залов", "Запрещён флуд в любых его проявлениях",
-     "спам, многократное упоминание участников или ролей"),
-    ("Ⅳ · Тайны покоев", "Запрещено любое распространение личной информации без согласия её владельца, "
-     "угрозы и причинение вреда на этой основе", "докс, сват, деанон"),
-    ("Ⅴ · Запретные свитки", "Запрещена трансляция и публикация шокирующего, порнографического "
-     "и тошнотворного контента", ""),
-    ("Ⅵ · Чужие знамёна", "Запрещена реклама любых сторонних ресурсов без согласия администрации", ""),
+    ("Ⅰ · Верность двору", "Не вреди двору: никаких призывов покинуть сервер, мошенничества "
+     "и критики ради разрушения."),
+    ("Ⅱ · Честь и достоинство", "Держи себя достойно: без оскорблений, провокаций, агрессии, "
+     "троллинга и криков в залах."),
+    ("Ⅲ · Тишина залов", "Не засоряй залы: без спама, флуда и лишних упоминаний участников и ролей."),
+    ("Ⅳ · Тайны покоев", "Чужие тайны неприкосновенны: никаких личных данных без согласия владельца, "
+     "угроз, докса, свата и деанона."),
+    ("Ⅴ · Запретные свитки", "Шокирующему, порнографическому и тошнотворному не место при дворе — "
+     "ни в сообщениях, ни в трансляциях."),
+    ("Ⅵ · Чужие знамёна", "Никакой рекламы сторонних ресурсов без дозволения Канцелярии."),
 ]
 
 
 def rules_payload():
-    """Эмбеды устава и файл баннера."""
+    """Эмбеды устава (как карточки) и файл баннера."""
     bn = getattr(bot, "banners", {})
     path = bn.get("ustav") or bn.get("admin")
     files, embeds = [], []
@@ -508,17 +507,46 @@ def rules_payload():
         embeds.append(top)
     embeds.append(discord.Embed(
         color=CRIMSON,
-        description="**Добро пожаловать ко двору Seikatsu.**\n"
-                    "Каждый, кто входит в эти залы, принимает устав.\n"
-                    "*Незнание устава не освобождает от ответственности.*"))
-    for title, rule, examples in RULES:
-        text = f"**{rule}**" + (f"\n*({examples})*" if examples else "")
-        embeds.append(discord.Embed(title=title, description=text, color=CRIMSON))
+        description="Добро пожаловать ко двору. Прочти устав — каждый, кто входит в эти залы, "
+                    "принимает его.\n-# Нарушения рассматривает стража. Приговор окончателен, "
+                    "обсуждение — в личных сообщениях стражи."))
+    for title, rule in RULES:
+        embeds.append(discord.Embed(title=title, description=rule, color=CRIMSON))
     embeds.append(discord.Embed(
-        color=discord.Color.from_rgb(110, 20, 28),
-        description="**Кара за нарушения:** предупреждение → мут → изгнание из двора.\n"
-                    "*Решение принимает стража. Спорить — только в личных сообщениях стражи.*"))
+        title="Кара за нарушения", color=discord.Color.from_rgb(110, 20, 28),
+        description="Предупреждение → мут → изгнание из двора\n-# Тяжёлые нарушения — изгнание сразу."))
     return embeds, files
+
+
+def _roles_channel(guild: discord.Guild):
+    for ch in guild.text_channels:
+        if "герб" in ch.name or "рол" in ch.name:
+            return ch
+    return None
+
+
+class RulesView(discord.ui.View):
+    """Кнопки под уставом (постоянные)."""
+    def __init__(self, guild: discord.Guild | None = None):
+        super().__init__(timeout=None)
+        self.accept.emoji = em("adm_seal", "👑")
+        self.ask.emoji = em("duel", "🛡️")
+        ch = _roles_channel(guild) if guild else None
+        if ch:
+            self.add_item(discord.ui.Button(label="Гербы и роли", emoji=em("ring", "💞"), url=ch.jump_url))
+
+    @discord.ui.button(label="Принимаю устав", style=discord.ButtonStyle.success, custom_id="court:rules:accept")
+    async def accept(self, inter: discord.Interaction, _):
+        await inter.response.send_message(
+            "📜 Канцлер вносит твоё имя в книгу двора. Устав принят — добро пожаловать!", ephemeral=True)
+
+    @discord.ui.button(label="Вопрос страже", style=discord.ButtonStyle.secondary, custom_id="court:rules:ask")
+    async def ask(self, inter: discord.Interaction, _):
+        roles = " ".join(f"<@&{r}>" for r in ADMIN_ROLES if inter.guild and inter.guild.get_role(r))
+        await inter.response.send_message(
+            f"🛡️ С вопросом по уставу напиши в личные сообщения страже: {roles or 'администрации'}.\n"
+            "-# Спорить с решением в общих залах нельзя.", ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
 
 
 async def _chancellor_hook(ch: discord.TextChannel):
@@ -550,6 +578,8 @@ async def post_rules():
         cur = await bot.db.execute("SELECT value FROM meta WHERE key=?", (key,))
         row = await cur.fetchone()
         embeds, files = rules_payload()
+        view = RulesView(ch.guild)
+        bot.add_view(RulesView())
         try:
             hook = await _chancellor_hook(ch)
         except discord.HTTPException as ex:   # нет права «Управлять вебхуками» — пишет сам бот
@@ -559,17 +589,17 @@ async def post_rules():
             mid = int(row[0])
             try:
                 if hook:
-                    await hook.edit_message(mid, embeds=embeds, attachments=files)
+                    await hook.edit_message(mid, embeds=embeds, attachments=files, view=view)
                 else:
                     msg = await ch.fetch_message(mid)
-                    await msg.edit(embeds=embeds, attachments=files)
+                    await msg.edit(embeds=embeds, attachments=files, view=view)
                 return
             except discord.HTTPException:
                 pass   # сообщение удалено или чужое — публикуем заново
         if hook:
-            msg = await hook.send(embeds=embeds, files=files, wait=True)
+            msg = await hook.send(embeds=embeds, files=files, view=view, wait=True)
         else:
-            msg = await ch.send(embeds=embeds, files=files)
+            msg = await ch.send(embeds=embeds, files=files, view=view)
         await bot.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, str(msg.id)))
         await bot.db.commit()
     except Exception as ex:
