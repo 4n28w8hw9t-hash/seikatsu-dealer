@@ -29,6 +29,8 @@ PATHS_FEMALE = {
 # по каким ролям бот понимает пол (название роли, регистр не важен); без роли — мужские титулы
 FEMALE_ROLES = {"девушка"}
 MALE_ROLES = {"парень"}
+MALE_ROLE_ID = 1574505794316279929     # Кавалер
+FEMALE_ROLE_ID = 1574505809063444571   # Дама
 RANK_STEP = 10               # новый титул каждые 10 уровней
 # жалованье за /работа по ступеням титула (одинаковое для обоих путей)
 WORK_PAY = [50, 80, 120, 170, 230, 300, 380, 470, 570, 680, 800]
@@ -45,7 +47,11 @@ def tier_of(level: int) -> int:
 
 def is_female(member) -> bool:
     """Девушка — если у участника есть роль из FEMALE_ROLES (и нет роли из MALE_ROLES)."""
-    names = {r.name.strip().lower() for r in getattr(member, "roles", [])}
+    roles = getattr(member, "roles", [])
+    ids = {r.id for r in roles}
+    if FEMALE_ROLE_ID in ids or MALE_ROLE_ID in ids:   # роли «Дама» / «Кавалер» из канала ролей
+        return FEMALE_ROLE_ID in ids and MALE_ROLE_ID not in ids
+    names = {r.name.strip().lower() for r in roles}
     return bool(names & FEMALE_ROLES) and not names & MALE_ROLES
 
 

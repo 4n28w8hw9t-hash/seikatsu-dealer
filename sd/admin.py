@@ -523,6 +523,9 @@ class _RulesButton(discord.ui.Button):
 
 
 def _roles_channel(guild: discord.Guild):
+    ch = guild.get_channel(1466426644649742417)
+    if ch:
+        return ch
     for ch in guild.text_channels:
         if "герб" in ch.name or "рол" in ch.name:
             return ch
@@ -556,13 +559,13 @@ class RulesLayout(discord.ui.LayoutView):
         self.add_item(row)
 
 
-async def _chancellor_hook(ch: discord.TextChannel):
-    """Вебхук «Канцлер двора» в канале (создаётся один раз)."""
+async def _court_hook(ch: discord.TextChannel, name: str = "Канцлер двора", banner: str = "ustav"):
+    """Вебхук персонажа в канале (создаётся один раз, аватар — лицо с баннера)."""
     for h in await ch.webhooks():
-        if h.user and h.user.id == bot.user.id and h.name == "Канцлер двора":
+        if h.user and h.user.id == bot.user.id and h.name == name:
             return h
     avatar = None
-    path = getattr(bot, "banners", {}).get("ustav") or getattr(bot, "banners", {}).get("admin")
+    path = getattr(bot, "banners", {}).get(banner) or getattr(bot, "banners", {}).get("admin")
     if path and os.path.exists(path):
         from PIL import Image
         im = Image.open(path).convert("RGB")
@@ -572,7 +575,11 @@ async def _chancellor_hook(ch: discord.TextChannel):
         buf = io.BytesIO()
         face.save(buf, "PNG")
         avatar = buf.getvalue()
-    return await ch.create_webhook(name="Канцлер двора", avatar=avatar, reason="Устав двора")
+    return await ch.create_webhook(name=name, avatar=avatar, reason="Сообщения двора")
+
+
+async def _chancellor_hook(ch: discord.TextChannel):
+    return await _court_hook(ch, "Канцлер двора", "ustav")
 
 
 @bot.listen("on_ready")
@@ -627,3 +634,95 @@ async def post_rules():
         await bot.db.commit()
     except Exception as ex:
         print("Устав не опубликован:", repr(ex))
+
+
+# ═════════ Гербы: выбор пола в канале ролей (Герольд) ═════════
+from .levels import MALE_ROLE_ID, FEMALE_ROLE_ID  # noqa: E402
+
+ROLES_CHANNEL = 1466426644649742417
+
+
+class _GenderButton(discord.ui.Button):
+    def __init__(self, female: bool, **kw):
+        super().__init__(**kw)
+        self.female = female
+
+    async def callback(self, inter: discord.Interaction):
+        m, g = inter.user, inter.guild
+        want = g.get_role(FEMALE_ROLE_ID if self.female else MALE_ROLE_ID) if g else None
+        other = g.get_role(MALE_ROLE_ID if self.female else FEMALE_ROLE_ID) if g else None
+        if not want or not isinstance(m, discord.Member):
+            return await inter.response.send_message("🥀 Роль не найдена — напиши страже.", ephemeral=True)
+        try:
+            if want in m.roles:
+                await m.remove_roles(want, reason="Снял герб")
+                text = "🎭 Герольд вычеркнул твой герб. Выбери его снова, чтобы вернуться ко двору."
+            else:
+                if other and other in m.roles:
+                    await m.remove_roles(other, reason="Сменил герб")
+                await m.add_roles(want, reason="Выбрал герб")
+                if self.female:
+                    text = ("🎭 Герольд вносит тебя в книгу двора как **Дама**.\n"
+                            "-# Титулы будут в женской форме: Баронесса, Графиня, Герцогиня. Теперь открыт устав.")
+                else:
+                    text = ("🎭 Герольд вносит тебя в книгу двора как **Кавалер**.\n"
+                            "-# Титулы будут в мужской форме: Барон, Граф, Герцог. Теперь открыт устав.")
+        except discord.HTTPException as ex:
+            print("Герб не выдан:", m, repr(ex))
+            return await inter.response.send_message("🥀 Герольд не смог выдать герб — напиши страже.",
+                                                     ephemeral=True)
+        await inter.response.send_message(text, ephemeral=True)
+
+
+class GerbyLayout(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=None)
+        ui = discord.ui
+        path = getattr(bot, "banners", {}).get("gerby")
+        if path and os.path.exists(path):
+            self.add_item(ui.MediaGallery(discord.MediaGalleryItem("attachment://gerby.jpg")))
+        self.add_item(ui.Container(ui.TextDisplay(
+            "### Твой герб\nКак к тебе обращаться при дворе? От этого зависят титулы: "
+            "Барон или Баронесса, Граф или Графиня.\n"
+            "-# Нажми ещё раз, чтобы снять. Выбрать можно только один герб."), accent_colour=CRIMSON))
+        self.add_item(ui.ActionRow(
+            _GenderButton(False, label="Кавалер", style=discord.ButtonStyle.primary,
+                          emoji=em("male", "♂️"), custom_id="court:gender:m"),
+            _GenderButton(True, label="Дама", style=discord.ButtonStyle.danger,
+                          emoji=em("female", "♀️"), custom_id="court:gender:f")))
+
+
+@bot.listen("on_ready")
+async def post_gerby():
+    ch = bot.get_channel(ROLES_CHANNEL)
+    if not isinstance(ch, discord.TextChannel):
+        return
+    key = f"gerby_v1_{ch.id}"
+    try:
+        bot.add_view(GerbyLayout())
+        path = getattr(bot, "banners", {}).get("gerby")
+        files = [discord.File(path, filename="gerby.jpg")] if path and os.path.exists(path) else []
+        try:
+            hook = await _court_hook(ch, "Герольд", "gerby")
+        except discord.HTTPException as ex:
+            print("Вебхук Герольда не создан:", repr(ex))
+            hook = None
+        cur = await bot.db.execute("SELECT value FROM meta WHERE key=?", (key,))
+        row = await cur.fetchone()
+        if row:
+            try:
+                if hook:
+                    await hook.edit_message(int(row[0]), view=GerbyLayout(), attachments=files)
+                else:
+                    await (await ch.fetch_message(int(row[0]))).edit(view=GerbyLayout(), attachments=files)
+                return
+            except discord.HTTPException:
+                pass
+        if hook:
+            msg = await hook.send(view=GerbyLayout(), files=files, wait=True)
+        else:
+            msg = await ch.send(view=GerbyLayout(), files=files)
+        await bot.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, str(msg.id)))
+        await bot.db.commit()
+    except Exception as ex:
+        print("Гербы не опубликованы:", repr(ex))
