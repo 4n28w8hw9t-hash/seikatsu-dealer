@@ -376,7 +376,7 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
 
 # ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════
 DIVIDERS = [1574467661067194410, 1574469695627591700]   # staff, roles
-MEMBER_ROLE = 1365250956710772756   # member: у всех всегда, выдаётся при входе
+MEMBER_ROLE = 1365250956710772756   # member: выдаётся кнопкой «Принимаю устав»
 WRONG_DIVIDER = 1365250956710772756   # по ошибке считалась разделителем 23.11 — откатываем
 
 
@@ -399,8 +399,6 @@ async def sync_dividers(member: discord.Member, sections=None):
     sections = sections or _sections(member.guild)
     have = {r.id for r in member.roles}
     add, remove = [], []
-    if member.guild.get_role(MEMBER_ROLE) and MEMBER_ROLE not in have:
-        add.append(discord.Object(id=MEMBER_ROLE))
     for did, ids in sections.items():
         need = bool(have & ids)
         if need and did not in have:
@@ -414,11 +412,6 @@ async def sync_dividers(member: discord.Member, sections=None):
             await member.remove_roles(*remove, reason="Разделитель: в разделе нет ролей")
     except discord.HTTPException as ex:
         print("Разделитель не выдан:", member, repr(ex))
-
-
-@bot.listen("on_member_join")
-async def _member_join(member: discord.Member):
-    await sync_dividers(member)
 
 
 @bot.listen("on_member_update")
@@ -508,8 +501,19 @@ class _RulesButton(discord.ui.Button):
 
     async def callback(self, inter: discord.Interaction):
         if self.kind == "accept":
-            await inter.response.send_message(
-                "📜 Канцлер вносит твоё имя в книгу двора. Устав принят — добро пожаловать!", ephemeral=True)
+            m = inter.user
+            role = inter.guild.get_role(MEMBER_ROLE) if inter.guild else None
+            if role and isinstance(m, discord.Member) and role not in m.roles:
+                try:
+                    await m.add_roles(role, reason="Принял устав")
+                except discord.HTTPException as ex:
+                    print("member не выдан:", m, repr(ex))
+                    return await inter.response.send_message(
+                        "🥀 Канцлер не смог открыть двери — напиши страже.", ephemeral=True)
+                return await inter.response.send_message(
+                    "📜 Канцлер вносит твоё имя в книгу двора. Устав принят — двери замка открыты!",
+                    ephemeral=True)
+            await inter.response.send_message("📜 Ты уже принял устав — двери двора открыты.", ephemeral=True)
         else:
             roles = " ".join(f"<@&{r}>" for r in ADMIN_ROLES if inter.guild and inter.guild.get_role(r))
             await inter.response.send_message(
