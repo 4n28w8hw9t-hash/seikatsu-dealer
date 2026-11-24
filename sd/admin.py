@@ -573,10 +573,18 @@ async def post_rules():
     ch = bot.get_channel(RULES_CHANNEL)
     if not isinstance(ch, discord.TextChannel):
         return
-    key = f"rules_msg_{ch.id}"
+    key = f"rules_v2_{ch.id}"          # смена ключа = опубликовать заново (старое сообщение удаляется)
+    old_keys = [f"rules_msg_{ch.id}"]
     try:
         cur = await bot.db.execute("SELECT value FROM meta WHERE key=?", (key,))
         row = await cur.fetchone()
+        old_ids = []
+        if not row:
+            for k in old_keys:
+                c2 = await bot.db.execute("SELECT value FROM meta WHERE key=?", (k,))
+                r2 = await c2.fetchone()
+                if r2:
+                    old_ids.append(int(r2[0]))
         embeds, files = rules_payload()
         view = RulesView(ch.guild)
         bot.add_view(RulesView())
@@ -596,6 +604,14 @@ async def post_rules():
                 return
             except discord.HTTPException:
                 pass   # сообщение удалено или чужое — публикуем заново
+        for mid in old_ids:   # убираем прежний устав
+            try:
+                if hook:
+                    await hook.delete_message(mid)
+                else:
+                    await (await ch.fetch_message(mid)).delete()
+            except discord.HTTPException:
+                pass
         if hook:
             msg = await hook.send(embeds=embeds, files=files, view=view, wait=True)
         else:
