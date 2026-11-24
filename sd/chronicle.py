@@ -1,4 +1,4 @@
-"""Хроники двора: публичная «летопись» (форум) и закрытый «журнал» стражи + проверка прав бота.
+"""Хроники двора: «летопись» и «журнал» стражи (оба — чаты для администрации) + проверка прав бота.
 Каналы создаются сами в стиле сервера (берётся с канала устава): ┌|📖・летопись, └|🪶・журнал."""
 import asyncio
 import os
@@ -44,9 +44,11 @@ def _name(guild, tree, emoji, word):
     return f"{tree}{bar}{emoji}{tail}{word.upper() if upper else word}"
 
 
+CAT_NAME = "✦ ХРОНИКИ ✦"
+
+
 def _cat_name(guild, word):
-    cat = _style(guild)[4]
-    return re.sub(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё ]*[A-Za-zА-Яа-яЁё]", word, cat, count=1)
+    return CAT_NAME
 
 
 async def _meta(key, value=None):
@@ -58,47 +60,48 @@ async def _meta(key, value=None):
     await bot.db.commit()
 
 
+def _staff_ow(guild, me):
+    ow = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+          me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True, attach_files=True)}
+    for rid in STAFF_ROLES:
+        r = guild.get_role(rid)
+        if r:
+            ow[r] = discord.PermissionOverwrite(view_channel=True, send_messages=False)
+    return ow
+
+
 async def ensure_channels(guild: discord.Guild):
-    """Категория «✦ ХРОНИКИ ✦» с форумом-летописью (для member) и журналом (для стражи)."""
+    """Категория «✦ ХРОНИКИ ✦»: летопись и журнал — обычные чаты, видны только администрации."""
     me = guild.me
     if not me.guild_permissions.manage_channels:
         return None, None
     cat = guild.get_channel(await _meta(f"chron_cat_{guild.id}") or 0)
     if not isinstance(cat, discord.CategoryChannel):
-        cat = await guild.create_category(_cat_name(guild, "ХРОНИКИ"), reason="Хроники двора")
+        cat = await guild.create_category(CAT_NAME, overwrites=_staff_ow(guild, me), reason="Хроники двора")
         await _meta(f"chron_cat_{guild.id}", cat.id)
-    everyone, member = guild.default_role, guild.get_role(MEMBER_ROLE)
+    elif cat.name != CAT_NAME:
+        await cat.edit(name=CAT_NAME, reason="Исправлено название")
     log = guild.get_channel(await _meta(f"journal_{guild.id}") or 0)
     if not isinstance(log, discord.TextChannel):
-        ow = {everyone: discord.PermissionOverwrite(view_channel=False),
-              me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True)}
-        for rid in STAFF_ROLES:
-            r = guild.get_role(rid)
-            if r:
-                ow[r] = discord.PermissionOverwrite(view_channel=True, send_messages=False)
         log = await guild.create_text_channel(
-            _name(guild, "└", "🪶", "журнал"), category=cat, overwrites=ow,
+            _name(guild, "└", "🪶", "журнал"), category=cat, overwrites=_staff_ow(guild, me),
             topic="Журнал стражи: устав, гербы, админ-панель, входы и выходы.", reason="Журнал стражи")
         await _meta(f"journal_{guild.id}", log.id)
-    forum = None
-    try:
-        forum = guild.get_channel(await _meta(f"letopis_{guild.id}") or 0)
-        if not isinstance(forum, discord.ForumChannel):
-            ow = {everyone: discord.PermissionOverwrite(view_channel=False),
-                  me: discord.PermissionOverwrite(view_channel=True, send_messages=True, create_public_threads=True,
-                                                  manage_threads=True, attach_files=True, embed_links=True)}
-            if member:
-                ow[member] = discord.PermissionOverwrite(view_channel=True, send_messages=False,
-                                                         create_public_threads=False, send_messages_in_threads=True)
-            forum = await guild.create_forum(
-                _name(guild, "┌", "📖", "летопись"), category=cat, overwrites=ow,
-                topic="Хроника двора: свадьбы, титулы и подвиги. Записи ведёт бот.",
-                available_tags=[discord.ForumTag(name=n, emoji=e) for n, e in TAGS], reason="Летопись двора")
-            await _meta(f"letopis_{guild.id}", forum.id)
-            await forum.move(beginning=True, category=cat, reason="Летопись — первой")
-    except discord.HTTPException as ex:   # форум бывает только на сервере-сообществе
-        print("Летопись не создана:", repr(ex))
-    return forum, log
+    chat = guild.get_channel(await _meta(f"letopis_{guild.id}") or 0)
+    if isinstance(chat, discord.ForumChannel):   # старый пустой форум → заменяем чатом
+        try:
+            await chat.delete(reason="Летопись теперь обычный чат")
+        except discord.HTTPException as ex:
+            print("Старый форум не удалён:", repr(ex))
+        chat = None
+    if not isinstance(chat, discord.TextChannel):
+        chat = await guild.create_text_channel(
+            _name(guild, "┌", "📖", "летопись"), category=cat, overwrites=_staff_ow(guild, me), position=0,
+            topic="Летопись двора: свадьбы, титулы, дуэли. Записи ведёт бот.", reason="Летопись двора")
+        await _meta(f"letopis_{guild.id}", chat.id)
+    else:
+        await chat.edit(overwrites=_staff_ow(guild, me), reason="Летопись только для администрации")
+    return chat, log
 
 
 # ───────── журнал стражи ─────────
@@ -125,22 +128,18 @@ def jlog(guild, text, color=None):
 
 # ───────── летопись ─────────
 async def chronicle(guild: discord.Guild | None, tag: str, title: str, text: str, banner: str | None = None):
+    """Строка-лог в летопись (только для администрации)."""
     if not guild:
         return
     try:
-        forum = guild.get_channel(await _meta(f"letopis_{guild.id}") or 0)
-        if not isinstance(forum, discord.ForumChannel):
+        ch = guild.get_channel(await _meta(f"letopis_{guild.id}") or 0)
+        if not isinstance(ch, discord.TextChannel):
             return
-        tags = [t for t in forum.available_tags if t.name == tag][:1]
-        e = discord.Embed(description=text, color=CRIMSON)
-        path = getattr(bot, "banners", {}).get(banner or "")
-        kw = {}
-        if path and os.path.exists(path):
-            fn = "chronicle" + os.path.splitext(path)[1].lower()
-            e.set_image(url=f"attachment://{fn}")
-            kw["file"] = discord.File(path, filename=fn)
-        await forum.create_thread(name=title[:100], embed=e, applied_tags=tags,
-                                  allowed_mentions=discord.AllowedMentions.none(), **kw)
+        emoji = dict(TAGS).get(tag, "📜")
+        text = re.sub(r"^\W+\s", "", text)   # своё эмодзи в начале текста убираем — оно уже у тега
+        e = discord.Embed(description=f"{emoji} **{tag}** · {text}", color=CRIMSON)
+        e.set_footer(text=time.strftime("%d.%m %H:%M"))
+        await ch.send(embed=e, allowed_mentions=discord.AllowedMentions.none())
     except Exception as ex:
         print("Летопись:", repr(ex))
 
