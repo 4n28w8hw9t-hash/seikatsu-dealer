@@ -476,3 +476,101 @@ async def _divider_startup():
                 await sync_dividers(m, sections)
         except Exception as ex:
             print("Разделители не проверены:", repr(ex))
+
+
+# ═════════ Устав двора: публикует Канцлер (вебхук) в канале устава ═════════
+RULES_CHANNEL = 1370852188611416064
+CRIMSON = discord.Color.from_rgb(150, 30, 40)
+RULES = [
+    ("Ⅰ · Верность двору", "Запрещены деструктивные действия по отношению к серверу",
+     "оскорбление участников, неконструктивная критика, мошеннические действия, призыв покинуть сервер"),
+    ("Ⅱ · Достоинство", "Запрещено неадекватное поведение в любых его проявлениях",
+     "оскорбления, провокации, агрессия, троллинг, крики и т. д."),
+    ("Ⅲ · Тишина залов", "Запрещён флуд в любых его проявлениях",
+     "спам, многократное упоминание участников или ролей"),
+    ("Ⅳ · Тайны покоев", "Запрещено любое распространение личной информации без согласия её владельца, "
+     "угрозы и причинение вреда на этой основе", "докс, сват, деанон"),
+    ("Ⅴ · Запретные свитки", "Запрещена трансляция и публикация шокирующего, порнографического "
+     "и тошнотворного контента", ""),
+    ("Ⅵ · Чужие знамёна", "Запрещена реклама любых сторонних ресурсов без согласия администрации", ""),
+]
+
+
+def rules_payload():
+    """Эмбеды устава и файл баннера."""
+    bn = getattr(bot, "banners", {})
+    path = bn.get("ustav") or bn.get("admin")
+    files, embeds = [], []
+    if path and os.path.exists(path):
+        files.append(discord.File(path, filename="ustav.jpg"))
+        top = discord.Embed(color=CRIMSON)
+        top.set_image(url="attachment://ustav.jpg")
+        embeds.append(top)
+    embeds.append(discord.Embed(
+        color=CRIMSON,
+        description="**Добро пожаловать ко двору Seikatsu.**\n"
+                    "Каждый, кто входит в эти залы, принимает устав.\n"
+                    "*Незнание устава не освобождает от ответственности.*"))
+    for title, rule, examples in RULES:
+        text = f"**{rule}**" + (f"\n*({examples})*" if examples else "")
+        embeds.append(discord.Embed(title=title, description=text, color=CRIMSON))
+    embeds.append(discord.Embed(
+        color=discord.Color.from_rgb(110, 20, 28),
+        description="**Кара за нарушения:** предупреждение → мут → изгнание из двора.\n"
+                    "*Решение принимает стража. Спорить — только в личных сообщениях стражи.*"))
+    return embeds, files
+
+
+async def _chancellor_hook(ch: discord.TextChannel):
+    """Вебхук «Канцлер двора» в канале (создаётся один раз)."""
+    for h in await ch.webhooks():
+        if h.user and h.user.id == bot.user.id and h.name == "Канцлер двора":
+            return h
+    avatar = None
+    path = getattr(bot, "banners", {}).get("ustav") or getattr(bot, "banners", {}).get("admin")
+    if path and os.path.exists(path):
+        from PIL import Image
+        im = Image.open(path).convert("RGB")
+        s = int(im.height * 0.62)
+        face = im.crop((int(im.width * 0.13), int(im.height * 0.06),
+                        int(im.width * 0.13) + s, int(im.height * 0.06) + s)).resize((256, 256))
+        buf = io.BytesIO()
+        face.save(buf, "PNG")
+        avatar = buf.getvalue()
+    return await ch.create_webhook(name="Канцлер двора", avatar=avatar, reason="Устав двора")
+
+
+@bot.listen("on_ready")
+async def post_rules():
+    ch = bot.get_channel(RULES_CHANNEL)
+    if not isinstance(ch, discord.TextChannel):
+        return
+    key = f"rules_msg_{ch.id}"
+    try:
+        cur = await bot.db.execute("SELECT value FROM meta WHERE key=?", (key,))
+        row = await cur.fetchone()
+        embeds, files = rules_payload()
+        try:
+            hook = await _chancellor_hook(ch)
+        except discord.HTTPException as ex:   # нет права «Управлять вебхуками» — пишет сам бот
+            print("Вебхук не создан:", repr(ex))
+            hook = None
+        if row:
+            mid = int(row[0])
+            try:
+                if hook:
+                    await hook.edit_message(mid, embeds=embeds, attachments=files)
+                else:
+                    msg = await ch.fetch_message(mid)
+                    await msg.edit(embeds=embeds, attachments=files)
+                return
+            except discord.HTTPException:
+                pass   # сообщение удалено или чужое — публикуем заново
+        if hook:
+            msg = await hook.send(embeds=embeds, files=files, wait=True)
+        else:
+            msg = await ch.send(embeds=embeds, files=files)
+        await bot.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, str(msg.id)))
+        await bot.db.commit()
+    except Exception as ex:
+        print("Устав не опубликован:", repr(ex))
