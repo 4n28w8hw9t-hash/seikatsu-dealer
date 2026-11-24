@@ -153,6 +153,9 @@ class MarryView(discord.ui.View):
         await bot.db.commit()
         await set_couple_role(g, (a, b), True)
         name, _, _ = RINGS[self.ring]
+        from .chronicle import clog
+        clog(inter.guild, "Свадьба", f"Венчание: {self.a.display_name} и {self.b.display_name}",
+             f"💍 Двор празднует! {self.a.mention} и {self.b.mention} скрепили союз кольцом «{name}».", "marry")
         emo = ring_emo(self.ring)
         await inter.response.edit_message(view=None, embed=self.card(
             f"{emo} {self.b.mention} говорит «да»!\n"

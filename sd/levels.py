@@ -155,6 +155,12 @@ async def on_message(message: discord.Message):
             await out.send(iconize(text))
         except discord.HTTPException:
             pass
+        if title:
+            from .chronicle import clog
+            fem = is_female(message.author)
+            clog(message.guild, "Титул", f"{message.author.display_name} — {title}",
+                 f"👑 {message.author.mention} достигает **{lvl} уровня** и получает титул **{title}**.",
+                 title_banner(path, lvl, fem))
 
 
 @tasks.loop(minutes=1)

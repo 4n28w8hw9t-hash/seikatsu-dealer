@@ -94,6 +94,11 @@ class DuelView(discord.ui.View):
             elif key == "win":
                 em.set_image(url=None)
         await inter.response.edit_message(view=None, embeds=[e, e2], attachments=files)
+        if self.bet >= 1000:   # крупные дуэли — в летопись
+            from .chronicle import clog
+            clog(inter.guild, "Дуэль", f"Дуэль на {self.bet * 2} монет",
+                 f"⚔️ {win.mention} против {lose.mention}. Клинок сломан — победа за {win.mention}, "
+                 f"выигрыш **{fmt(self.bet * 2)}**.", "duel_win")
 
     @discord.ui.button(label="Отказаться", style=discord.ButtonStyle.danger)
     async def decline(self, inter: discord.Interaction, button: discord.ui.Button):

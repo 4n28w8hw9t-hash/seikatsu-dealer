@@ -173,6 +173,8 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
 
 def log(inter: discord.Interaction, m: discord.Member, what: str):
     print(f"[АДМИН] {inter.user} ({inter.user.id}) → {m} ({m.id}): {what}")
+    from .chronicle import jlog
+    jlog(inter.guild, f"🛠️ {inter.user.mention} → {m.mention}: {what}")
 
 
 class NumModal(discord.ui.Modal):
@@ -364,9 +366,12 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
         bn = getattr(bot, "banners", {})
         path = bn.get("admin") or bn.get("top")
         f = discord.File(path, filename="staff.jpg") if path and os.path.exists(path) else None
+        probs = getattr(bot, "perm_report", {}).get(inter.guild_id, [])
+        check = ("🔎 Проверка прав: всё в порядке ✅" if not probs else
+                 "🔎 **Проверка прав — есть проблемы:**\n• " + "\n• ".join(probs))
         e = discord.Embed(title="Канцелярия двора",
                           description="Выбери участника в списке ниже — откроется его карточка.\n"
-                                      "-# Монеты · уровень · опыт · путь · кольца · сбросы",
+                                      "-# Монеты · уровень · опыт · путь · кольца · сбросы\n\n" + check,
                           color=discord.Color.from_rgb(150, 30, 40))
         if f:
             e.set_image(url="attachment://staff.jpg")
@@ -506,6 +511,8 @@ class _RulesButton(discord.ui.Button):
             if role and isinstance(m, discord.Member) and role not in m.roles:
                 try:
                     await m.add_roles(role, reason="Принял устав")
+                    from .chronicle import jlog
+                    jlog(inter.guild, f"📜 {m.mention} принимает устав — выдана роль member", discord.Color.green())
                 except discord.HTTPException as ex:
                     print("member не выдан:", m, repr(ex))
                     return await inter.response.send_message(
@@ -671,6 +678,9 @@ class _GenderButton(discord.ui.Button):
             print("Герб не выдан:", m, repr(ex))
             return await inter.response.send_message("🥀 Герольд не смог выдать герб — напиши страже.",
                                                      ephemeral=True)
+        from .chronicle import jlog
+        jlog(g, f"🎭 {m.mention}: " + ("снимает герб" if "вычеркнул" in text
+                                       else f"герб **{'Дама' if self.female else 'Кавалер'}**"))
         await inter.response.send_message(text, ephemeral=True)
 
 

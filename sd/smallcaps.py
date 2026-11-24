@@ -49,7 +49,7 @@ def _walk(obj, parent=None):
 
 def _is_message_route(route) -> bool:
     p = getattr(route, "path", "") or ""
-    return p.endswith("/messages") or "/messages/{message_id}" in p or "/callback" in p \
+    return p.endswith("/messages") or p.endswith("/threads") or "/messages/{message_id}" in p or "/callback" in p \
         or p.startswith("/webhooks/{webhook_id}/{webhook_token}")
 
 
