@@ -495,27 +495,27 @@ RULES = [
 ]
 
 
-def rules_payload():
-    """Эмбеды устава (как карточки) и файл баннера."""
+def _rules_banner():
     bn = getattr(bot, "banners", {})
     path = bn.get("ustav") or bn.get("admin")
-    files, embeds = [], []
-    if path and os.path.exists(path):
-        files.append(discord.File(path, filename="ustav.jpg"))
-        top = discord.Embed(color=CRIMSON)
-        top.set_image(url="attachment://ustav.jpg")
-        embeds.append(top)
-    embeds.append(discord.Embed(
-        color=CRIMSON,
-        description="Добро пожаловать ко двору. Прочти устав — каждый, кто входит в эти залы, "
-                    "принимает его.\n-# Нарушения рассматривает стража. Приговор окончателен, "
-                    "обсуждение — в личных сообщениях стражи."))
-    for title, rule in RULES:
-        embeds.append(discord.Embed(title=title, description=rule, color=CRIMSON))
-    embeds.append(discord.Embed(
-        title="Кара за нарушения", color=discord.Color.from_rgb(110, 20, 28),
-        description="Предупреждение → мут → изгнание из двора\n-# Тяжёлые нарушения — изгнание сразу."))
-    return embeds, files
+    return path if path and os.path.exists(path) else None
+
+
+class _RulesButton(discord.ui.Button):
+    def __init__(self, kind: str, **kw):
+        super().__init__(**kw)
+        self.kind = kind
+
+    async def callback(self, inter: discord.Interaction):
+        if self.kind == "accept":
+            await inter.response.send_message(
+                "📜 Канцлер вносит твоё имя в книгу двора. Устав принят — добро пожаловать!", ephemeral=True)
+        else:
+            roles = " ".join(f"<@&{r}>" for r in ADMIN_ROLES if inter.guild and inter.guild.get_role(r))
+            await inter.response.send_message(
+                f"⚔️ С вопросом по уставу напиши в личные сообщения страже: {roles or 'администрации'}.\n"
+                "-# Спорить с решением в общих залах нельзя.", ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none())
 
 
 def _roles_channel(guild: discord.Guild):
@@ -525,28 +525,31 @@ def _roles_channel(guild: discord.Guild):
     return None
 
 
-class RulesView(discord.ui.View):
-    """Кнопки под уставом (постоянные)."""
+class RulesLayout(discord.ui.LayoutView):
+    """Устав карточками (Components V2): баннер во всю ширину, правила — контейнеры."""
     def __init__(self, guild: discord.Guild | None = None):
         super().__init__(timeout=None)
-        self.accept.emoji = em("adm_seal", "👑")
-        self.ask.emoji = em("duel", "🛡️")
+        ui = discord.ui
+        if _rules_banner():
+            self.add_item(ui.MediaGallery(discord.MediaGalleryItem("attachment://ustav.jpg")))
+        self.add_item(ui.Container(ui.TextDisplay(
+            "Добро пожаловать ко двору. Прочти устав — каждый, кто входит в эти залы, принимает его.\n"
+            "-# Нарушения рассматривает стража. Приговор окончателен, обсуждение — в личных сообщениях стражи."),
+            accent_colour=CRIMSON))
+        for title, rule in RULES:
+            self.add_item(ui.Container(ui.TextDisplay(f"### {title}\n{rule}"), accent_colour=CRIMSON))
+        self.add_item(ui.Container(ui.TextDisplay(
+            "### Кара за нарушения\nПредупреждение → мут → изгнание из двора\n"
+            "-# Тяжёлые нарушения — изгнание сразу."), accent_colour=discord.Color.from_rgb(110, 20, 28)))
+        row = ui.ActionRow(
+            _RulesButton("accept", label="Принимаю устав", style=discord.ButtonStyle.success,
+                         emoji=em("noble", "👑"), custom_id="court:rules:accept"),
+            _RulesButton("ask", label="Вопрос страже", style=discord.ButtonStyle.secondary,
+                         emoji=em("duel", "⚔️"), custom_id="court:rules:ask"))
         ch = _roles_channel(guild) if guild else None
         if ch:
-            self.add_item(discord.ui.Button(label="Гербы и роли", emoji=em("ring", "💞"), url=ch.jump_url))
-
-    @discord.ui.button(label="Принимаю устав", style=discord.ButtonStyle.success, custom_id="court:rules:accept")
-    async def accept(self, inter: discord.Interaction, _):
-        await inter.response.send_message(
-            "📜 Канцлер вносит твоё имя в книгу двора. Устав принят — добро пожаловать!", ephemeral=True)
-
-    @discord.ui.button(label="Вопрос страже", style=discord.ButtonStyle.secondary, custom_id="court:rules:ask")
-    async def ask(self, inter: discord.Interaction, _):
-        roles = " ".join(f"<@&{r}>" for r in ADMIN_ROLES if inter.guild and inter.guild.get_role(r))
-        await inter.response.send_message(
-            f"🛡️ С вопросом по уставу напиши в личные сообщения страже: {roles or 'администрации'}.\n"
-            "-# Спорить с решением в общих залах нельзя.", ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none())
+            row.add_item(ui.Button(label="Гербы и роли", emoji=em("couple", "💞"), url=ch.jump_url))
+        self.add_item(row)
 
 
 async def _chancellor_hook(ch: discord.TextChannel):
@@ -573,9 +576,10 @@ async def post_rules():
     ch = bot.get_channel(RULES_CHANNEL)
     if not isinstance(ch, discord.TextChannel):
         return
-    key = f"rules_v2_{ch.id}"          # смена ключа = опубликовать заново (старое сообщение удаляется)
-    old_keys = [f"rules_msg_{ch.id}"]
+    key = f"rules_v3_{ch.id}"          # смена ключа = опубликовать заново (старое сообщение удаляется)
+    old_keys = [f"rules_msg_{ch.id}", f"rules_v2_{ch.id}"]
     try:
+        bot.add_view(RulesLayout())    # кнопки работают и после перезапуска
         cur = await bot.db.execute("SELECT value FROM meta WHERE key=?", (key,))
         row = await cur.fetchone()
         old_ids = []
@@ -585,9 +589,9 @@ async def post_rules():
                 r2 = await c2.fetchone()
                 if r2:
                     old_ids.append(int(r2[0]))
-        embeds, files = rules_payload()
-        view = RulesView(ch.guild)
-        bot.add_view(RulesView())
+        view = RulesLayout(ch.guild)
+        banner = _rules_banner()
+        files = [discord.File(banner, filename="ustav.jpg")] if banner else []
         try:
             hook = await _chancellor_hook(ch)
         except discord.HTTPException as ex:   # нет права «Управлять вебхуками» — пишет сам бот
@@ -597,13 +601,12 @@ async def post_rules():
             mid = int(row[0])
             try:
                 if hook:
-                    await hook.edit_message(mid, embeds=embeds, attachments=files, view=view)
+                    await hook.edit_message(mid, view=view, attachments=files)
                 else:
-                    msg = await ch.fetch_message(mid)
-                    await msg.edit(embeds=embeds, attachments=files, view=view)
+                    await (await ch.fetch_message(mid)).edit(view=view, attachments=files)
                 return
             except discord.HTTPException:
-                pass   # сообщение удалено или чужое — публикуем заново
+                pass   # сообщение удалено — публикуем заново
         for mid in old_ids:   # убираем прежний устав
             try:
                 if hook:
@@ -613,9 +616,9 @@ async def post_rules():
             except discord.HTTPException:
                 pass
         if hook:
-            msg = await hook.send(embeds=embeds, files=files, view=view, wait=True)
+            msg = await hook.send(view=view, files=files, wait=True)
         else:
-            msg = await ch.send(embeds=embeds, files=files, view=view)
+            msg = await ch.send(view=view, files=files)
         await bot.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, str(msg.id)))
         await bot.db.commit()
     except Exception as ex:
