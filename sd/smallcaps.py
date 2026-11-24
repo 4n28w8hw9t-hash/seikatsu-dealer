@@ -7,7 +7,7 @@ import discord
 from discord import http as _http
 from discord.webhook import async_ as _wh
 
-ENABLED = True
+ENABLED = False
 
 MAP = {
     'а': 'ᴀ', 'в': 'ʙ', 'г': 'ᴦ', 'е': 'ᴇ', 'ё': 'ᴇ', 'и': 'ᴎ', 'к': 'ᴋ', 'л': 'ᴫ', 'м': 'ᴍ', 'н': 'ʜ',
