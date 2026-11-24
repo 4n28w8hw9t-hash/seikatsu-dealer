@@ -3,6 +3,7 @@ import aiosqlite
 import art
 import asyncio
 import discord
+from . import smallcaps  # noqa: F401,E402  — Small Caps для текста бота
 import io
 import os
 import time
