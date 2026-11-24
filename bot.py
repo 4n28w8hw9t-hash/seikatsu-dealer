@@ -2,8 +2,12 @@
 Seikatsu Dealer — точка входа.
 Сам бот лежит в папке sd/: каждый файл — отдельная часть (см. sd/__init__.py).
 """
-from sd.core import TOKEN, bot
-from sd import levels, paths, achievements, economy, games, marriage, market, menu, admin  # noqa: F401  (подключают свои команды)
+import sys
+
+sys.stdout.reconfigure(line_buffering=True)   # print() сразу виден в журнале Bothost
+
+from sd.core import TOKEN, bot  # noqa: E402
+from sd import levels, paths, achievements, economy, games, marriage, market, menu, admin  # noqa: F401,E402
 
 
 if __name__ == "__main__":
