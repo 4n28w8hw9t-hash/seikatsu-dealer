@@ -11,7 +11,7 @@ from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
 from .levels import PATHS, RANK_STEP, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, work_pay, xp_for
-from . import market, marriage
+from . import market, marriage, top
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
 
@@ -37,6 +37,7 @@ async def help_cmd(inter: discord.Interaction):
                       "`/работа` — жалованье по титулу раз в 12 часов\n"
                       "`/профиль` — титул, уровень, опыт, баланс, пара, достижения\n"
                       "`/достижения` — все достижения с редкостью и наградами\n"
+                      "`/топ` — лучшие при дворе по уровню и по монетам\n"
                       "Опыт идёт за сообщения и время в голосовых.")
     e.add_field(name=f"{E('sd_ring', '💍')} Брак", inline=False,
                 value="`/кольца` — купить кольцо · `/брак @участник` — предложение\n"
@@ -53,7 +54,7 @@ async def help_cmd(inter: discord.Interaction):
 
 # ═════════ Меню ═════════
 MENU_ROWS = [
-    "---", "### {sd_profile} Профиль", ["profile", "path", "work", "ach"],
+    "---", "### {sd_profile} Профиль", ["profile", "path", "work", "ach", "top"],
     "---", "### {sd_coin} Монеты", ["balance", "daily", "coin"],
     "---", "### {sd_couple} Пара", ["couple", "rings", "loveroom"],
     "---", "### {sd_inv} Роли", ["market", "roles", "rolecreate"],
@@ -66,6 +67,7 @@ MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"
 # выпадающий список «Все разделы»: (ключ, подпись, пояснение)
 SECTIONS = [
     ("path", "Путь и титул", "Знать или Вера, следующее звание"),
+    ("top", "Топ двора", "Лучшие по уровню и по монетам"),
     ("ach", "Достижения", "Награды за успехи"),
     ("coin", "Монетка", "Орёл или решка, выигрыш x2"),
     ("duel", "Дуэль", "Открытый вызов — принять может любой"),
@@ -165,6 +167,10 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await pick_path(inter, key[5:])
     elif key == "ach":
         await achievements.callback(inter, None)
+    elif key in ("top", "top:lvl"):
+        await top.show_top(inter, "lvl")
+    elif key == "top:coin":
+        await top.show_top(inter, "coin")
     elif key == "balance":
         await balance.callback(inter, None)
     elif key == "daily":

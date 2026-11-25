@@ -134,6 +134,9 @@ BUTTONS = {
     "help": ("Помощь", "❓", "help", _G),
     "roomname": ("Название румы", "🏷️", "tag", _G),
     "duel": ("Дуэль", "⚔️", "duel", _G),
+    "top": ("Топ", "🏆", "trophy", _B),
+    "top:lvl": ("По уровню", "⭐", "top_lvl", _B),
+    "top:coin": ("По монетам", "💰", "top_coin", _G),
 }
 NAV = ["menu", "profile", "couple"]
 
