@@ -1,15 +1,11 @@
 """Рынок ролей: игроки создают свои роли, выставляют их на продажу и получают процент."""
-import asyncio
-import os
 import re
 import time
 
 import discord
 from discord import app_commands
 
-import art
-from .core import bot, icon_emoji, embed, fmt, member_name, reply, send_card, send_panel
-from .levels import is_female
+from .core import bot, icon_emoji, embed, fmt, member_name, reply, send_card
 
 ROLE_CREATE_PRICE = 10_000   # создание роли
 ROLE_LIMIT = 3               # сколько ролей может создать один человек
@@ -269,30 +265,45 @@ async def my_roles(inter: discord.Interaction):
     await send_card(inter, e, "inv", rows=rows, allowed_mentions=discord.AllowedMentions.none())
 
 
-@bot.tree.command(name="инвентарь", description="Сколько у тебя ролей и колец")
+@bot.tree.command(name="инвентарь", description="Твои роли и кольца")
 async def inventory(inter: discord.Interaction):
     g, uid = inter.guild_id, inter.user.id
     roles = [r for r in await owned_roles(g, uid)
              if not await forget_missing(inter.guild, r)]
     worn_roles = sum(bool(r["worn"]) for r in roles)
-    from .marriage import RINGS, get_marriage, get_rings, ring_emo
+    mine = [r for r in roles if r["owner_id"] == uid]
+    from .marriage import RINGS, get_marriage, get_rings
     rings = await get_rings(g, uid)
     mar = await get_marriage(g, uid)
     active = mar["ring"] if mar else None
     total_stock = sum(rings.values())
     total_rings = total_stock + int(active in RINGS)
     current_name = RINGS[active][0] if active in RINGS else "нет"
-    rows = [["roles", "rings", "couple"]]
-    keeper = "inventory_keeper_f.png" if is_female(inter.user) else "inventory_keeper_m.png"
-    keeper_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chars", keeper)
-    keeper_avatar = await asyncio.to_thread(art.thumb, keeper_path)
-    await send_panel(
-        inter, "inventory", f"Инвентарь · {inter.user.display_name}",
-        subtitle="Твои роли и кольца", icon="inventory_chest", avatar=keeper_avatar,
-        tiles=[("inventory_roles", "Роли", str(len(roles)), f"надето: {worn_roles}", False),
-               ("ring", "Всего колец", str(total_rings),
-                f"в запасе: {total_stock} · в профиле: {current_name}", False)],
-        rows=rows)
+
+    lines = []
+    for r in roles:
+        tags = []
+        if r["owner_id"] == uid:
+            tags.append("твоя")
+            tags.append(f"в продаже за {r['price']}" if r["price"] is not None else "не продаётся")
+            tags.append(f"продаж: {r['sold']}, заработано: {r['earned']}")
+        tags.append("надета" if r["worn"] else "снята")
+        lines.append(f"<@&{r['role_id']}> — " + " · ".join(tags))
+
+    role_text = "\n".join(lines) if lines else "У тебя пока нет ролей."
+    description = (role_text + f"\n\n**Надето:** {worn_roles} · **Создано:** {len(mine)}/{ROLE_LIMIT}\n"
+                   f"**Всего колец:** {total_rings} · в запасе: {total_stock} · в профиле: {current_name}")
+    e = embed(f"{icon_emoji('🎒')} Мои роли", description)
+    rows = []
+    if roles:
+        rows.append([discord.ui.Select(
+            custom_id="sd:mk:mine", placeholder="Выбери роль",
+            options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
+                                          emoji=icon_emoji("⭐") if r["owner_id"] == uid else None)
+                     for r in roles[:25]])])
+    rows.append(["rolecreate", "market"])
+    await send_card(inter, e, "inv", rows=rows,
+                    allowed_mentions=discord.AllowedMentions.none())
 
 
 async def show_mine(inter: discord.Interaction, ref: int):
