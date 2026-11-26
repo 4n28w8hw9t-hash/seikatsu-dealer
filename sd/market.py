@@ -278,11 +278,6 @@ async def inventory(inter: discord.Interaction):
     total_stock = sum(rings.values())
     total_rings = total_stock + int(active in RINGS)
     current_name = RINGS[active][0] if active in RINGS else "нет"
-    lines = []
-    for key, (name, _, _) in RINGS.items():
-        count = rings.get(key, 0)
-        suffix = f" · стоит в профиле пары" if key == active else ""
-        lines.append((f"ring_{key}", f"{name} · в запасе: {count}{suffix}"))
     rows = [["roles", "rings", "couple"]]
     await send_panel(
         inter, "inv", f"Инвентарь · {inter.user.display_name}",
@@ -290,7 +285,7 @@ async def inventory(inter: discord.Interaction):
         tiles=[("inv", "Роли", str(len(roles)), f"надето: {worn_roles}", False),
                ("ring", "Всего колец", str(total_rings),
                 f"в запасе: {total_stock} · в профиле: {current_name}", False)],
-        lines=lines, rows=rows)
+        rows=rows)
 
 
 async def show_mine(inter: discord.Interaction, ref: int):
