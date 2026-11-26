@@ -46,6 +46,7 @@ async def help_cmd(inter: discord.Interaction):
     e.add_field(name=f"{E('sd_inv', '🎭')} Роли", inline=False,
                 value=f"`/создать_роль` — своя роль за {market.ROLE_CREATE_PRICE:,} монет ".replace(",", " ")
                       + f"(до {market.ROLE_LIMIT} штук)\n"
+                      "`/инвентарь` — сколько у тебя ролей и колец\n"
                       "`/роли` — надеть, снять, выставить на продажу\n"
                       f"`/магазин` — купить роль; создатель получает {round(market.SELLER_SHARE * 100)}% с продажи")
     e.set_footer(text="Админам: /эко — управление монетами")
@@ -57,7 +58,7 @@ MENU_ROWS = [
     "---", "### {sd_profile} Профиль", ["profile", "path", "work", "ach", "top"],
     "---", "### {sd_coin} Монеты", ["balance", "daily", "coin"],
     "---", "### {sd_couple} Пара", ["couple", "rings", "loveroom"],
-    "---", "### {sd_inv} Роли", ["market", "roles", "rolecreate"],
+    "---", "### {sd_inv} Роли", ["inventory", "market", "roles", "rolecreate"],
     "---", ["help"],
 ]
 # окно с вводом: (заголовок, подпись поля, подсказка)
@@ -76,6 +77,7 @@ SECTIONS = [
     ("loveroom", "Лав-рума", "Открыть комнату для двоих"),
     ("market", "Рынок ролей", "Роли, созданные игроками"),
     ("roles", "Мои роли", "Надеть, снять, продать"),
+    ("inventory", "Инвентарь", "Количество ролей и колец"),
     ("rolecreate", "Создать роль", "Своя роль за 10 000"),
     ("help", "Помощь", "Все команды"),
 ]
@@ -201,6 +203,8 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await market.market.callback(inter)
     elif key == "roles":
         await market.my_roles.callback(inter)
+    elif key == "inventory":
+        await market.inventory.callback(inter)
     elif key.startswith("mk:"):
         await market.handle(inter, key)
     elif key == "coin":
