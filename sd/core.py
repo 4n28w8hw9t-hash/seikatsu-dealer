@@ -124,6 +124,8 @@ BUTTONS = {
     "rings": ("Кольца", "💍", "ring", _G),
     "ringbook": ("Коллекция колец", "💍", "ring", _B),
     "ringbook:action": ("Действие с кольцом", "💍", "ring", _B),
+    "ringbook:giftselect": ("Выбор кольца для подарка", "🎁", "gift", _B),
+    "ringgift": ("Подарить кольцо", "🎁", "gift", _B),
     "loveroom": ("Лав-рума", "🕯️", "loveroom", _B),
     "divorce": ("Развод", "💔", "divorce", _G),
     "divorce:yes": ("Да, развестись", "💔", "divorce", _R),
