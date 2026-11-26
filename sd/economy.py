@@ -45,7 +45,7 @@ async def balance(inter: discord.Interaction, участник: discord.Member |
     lines = [("hourglass", f"Серия наград: {streak} дн. подряд" +
               (" · на 7-й день — «Завсегдатай»" if streak < 7 else ""))]
     rows = [[btn("daily", "Забрать награду" if d_left <= 0 else "Награда",
-                 _OK if d_left <= 0 else _G), "coin", "duel"]]
+                 _OK if d_left <= 0 else _G), "coin", "duel", "history"]]
     await send_panel(inter, "balance", "Казна", subtitle="Твои монеты и что можно сделать сейчас",
                      icon="coin", tiles=tiles, lines=lines, rows=rows)
 
@@ -62,12 +62,14 @@ async def daily(inter: discord.Interaction):
                                  "Пока можно сходить на службу или сыграть в монетку.",
                                  rows=[["work", "coin", "balance"]])
     streak = u["streak"] + 1 if now - u["last_daily"] < 2 * DAY else 1
+    from .ledger import record as ledger_record
     from .quests import record
     async with bot.transaction() as db:
         await db.execute(
             "UPDATE users SET last_daily=?, streak=?, balance=balance+? WHERE guild_id=? AND user_id=?",
             (now, streak, DAILY_REWARD, g, uid))
         await record(db, g, uid, "daily", now)
+        await ledger_record(db, g, uid, DAILY_REWARD, "daily")
     left_coins = u["balance"] + DAILY_REWARD
     await send_result(inter, "daily", "🎁 Награда получена",
                       f"+{fmt(DAILY_REWARD)} · серия {streak} дн.",
@@ -162,11 +164,13 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
         avatar = await m.display_avatar.replace(size=128, format="png").read()
     except Exception:
         avatar = None
+    from .showcase import badge, selection
+    data["showcase"] = [(key, *badge(key)) for key in await selection(g, m.id)]
     banners = getattr(bot, "banners", {})
     actions = ["work", "path", "ach", "couple"]
     if m.id == inter.user.id:
         actions.append("inventory")
-    rows = [actions]
+    rows = [actions, ["showcase"]] if m.id == inter.user.id else [actions]
     try:
         png = await asyncio.to_thread(
             art.profile_card, banners.get(title_banner(path, lvl, is_female(m)) or "")
@@ -179,5 +183,7 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     for cell in data["cells"]:
         n, v = cell[:2]
         e.add_field(name=n, value=v)
+    if data["showcase"]:
+        e.add_field(name="Витрина", value=" · ".join(label for _, label, _, _ in data["showcase"]), inline=False)
     await reply(inter, embed=e, rows=rows)
 

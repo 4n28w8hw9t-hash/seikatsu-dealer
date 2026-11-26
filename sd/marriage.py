@@ -7,6 +7,7 @@ from discord import app_commands
 
 import art
 from .core import ECON_LOCK, E, bot, bot_channel, card_name, embed, fmt, member_name, reply, send_card, send_public
+from .ledger import record as ledger_record
 from .levels import level_of, xp_for
 
 # кольцо: (название, цена, эмодзи). Предложение делается лучшим из купленных колец.
@@ -91,6 +92,7 @@ async def purchase_ring(guild_id: int, user_id: int, key: str) -> bool:
             "INSERT INTO rings(guild_id,user_id,ring,qty) VALUES(?,?,?,1) "
             "ON CONFLICT(guild_id,user_id,ring) DO UPDATE SET qty=qty+1",
             (guild_id, user_id, key))
+        await ledger_record(db, guild_id, user_id, -price, "ring", RINGS[key][0])
     return True
 
 
@@ -403,7 +405,7 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
                       ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
     mine = inter.user.id in (mar["a"], mar["b"])
-    rows = [["loveroom"], ["ringbook", "anniversary", "roomname", "divorce"]] if mine else []
+    rows = [["loveroom", "pairquest"], ["ringbook", "anniversary", "roomname", "divorce"]] if mine else []
     banners = getattr(bot, "banners", {})
     try:
         png = await asyncio.to_thread(
@@ -551,10 +553,12 @@ async def rename_room(inter: discord.Interaction, name: str):
     if u["balance"] < ROOM_RENAME_PRICE:
         return await reply(inter, f"Смена названия стоит **{fmt(ROOM_RENAME_PRICE)}**, "
                                   f"у тебя **{fmt(u['balance'])}**", rows=[["balance", "daily"]])
-    await bot.add(g.id, inter.user.id, -ROOM_RENAME_PRICE)
-    await bot.db.execute("UPDATE marriages SET room_name=? WHERE guild_id=? AND a=?",
-                         (name, g.id, mar["a"]))
-    await bot.db.commit()
+    async with bot.transaction() as db:
+        await db.execute("UPDATE users SET balance=balance-? WHERE guild_id=? AND user_id=?",
+                         (ROOM_RENAME_PRICE, g.id, inter.user.id))
+        await db.execute("UPDATE marriages SET room_name=? WHERE guild_id=? AND a=?", (name, g.id, mar["a"]))
+        await ledger_record(db, g.id, inter.user.id, -ROOM_RENAME_PRICE, "room_name",
+                            discord.utils.escape_markdown(name))
     mar["room_name"] = name
     note = "Название поставится, когда вы откроете лав-руму."
     ch = g.get_channel(mar["room_id"]) if mar["room_id"] else None

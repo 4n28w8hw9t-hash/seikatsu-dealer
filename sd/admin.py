@@ -17,13 +17,13 @@ admin = app_commands.Group(name="эко", description="Управление мо
 
 @admin.command(name="выдать", description="Выдать монеты")
 async def a_give(inter: discord.Interaction, участник: discord.Member, сумма: int):
-    await bot.add(inter.guild_id, участник.id, сумма)
+    await bot.add(inter.guild_id, участник.id, сумма, reason="admin")
     await reply(inter, f"✅ Выдано {участник.mention}: **{fmt(сумма)}**", key=None, nav=False)
 
 
 @admin.command(name="забрать", description="Забрать монеты из кошелька")
 async def a_take(inter: discord.Interaction, участник: discord.Member, сумма: int):
-    await bot.add(inter.guild_id, участник.id, -сумма)
+    await bot.add(inter.guild_id, участник.id, -сумма, reason="admin")
     await reply(inter, f"✅ Забрано у {участник.mention}: **{fmt(сумма)}**", key=None, nav=False)
 
 
@@ -243,11 +243,18 @@ class StaffView(discord.ui.View):
         g, m = inter.guild_id, self.member
         async with ECON_LOCK:
             if kind == "coins_add":
-                await bot.add(g, m.id, n)
+                await bot.add(g, m.id, n, reason="admin")
                 note = f"{'Выдано' if n >= 0 else 'Забрано'} {num(abs(n))} монет"
             elif kind == "coins_set":
-                await bot.get_user(g, m.id)
-                await bot.set_field(g, m.id, balance=max(n, 0))
+                from .ledger import record
+                async with bot.transaction() as db:
+                    await bot.ensure_user(db, g, m.id)
+                    async with db.execute("SELECT balance FROM users WHERE guild_id=? AND user_id=?",
+                                          (g, m.id)) as cur:
+                        previous = (await cur.fetchone())[0]
+                    await db.execute("UPDATE users SET balance=? WHERE guild_id=? AND user_id=?",
+                                     (max(n, 0), g, m.id))
+                    await record(db, g, m.id, max(n, 0) - previous, "admin", "Баланс установлен")
                 note = f"Баланс теперь {num(max(n, 0))}"
             elif kind == "level_set":
                 n = max(1, min(n, 200))

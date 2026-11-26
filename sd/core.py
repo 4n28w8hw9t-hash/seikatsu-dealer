@@ -83,6 +83,7 @@ async def after_action(inter: discord.Interaction):
 
 
 STAFF_COMMANDS = {"админ"}
+PRIVATE_COMMANDS = {"история"}
 
 
 class DeferTree(app_commands.CommandTree):
@@ -96,7 +97,8 @@ class DeferTree(app_commands.CommandTree):
                 if too_fast(interaction.user.id):
                     return await interaction.response.send_message(
                         "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
-                await interaction.response.defer(thinking=True, ephemeral=staff)
+                await interaction.response.defer(thinking=True,
+                    ephemeral=staff or (interaction.data or {}).get("name") in PRIVATE_COMMANDS)
             except discord.HTTPException:
                 pass
         async with ECON_LOCK:
@@ -136,6 +138,11 @@ BUTTONS = {
     "market": ("Магазин ролей", "🛒", "shop", _G),
     "roles": ("Мои роли", "🎭", "inv", _B),
     "inventory": ("Инвентарь", "🎒", "inventory_chest", _B),
+    "history": ("История", "📒", "history", _B),
+    "pairquest": ("Поручение пары", "📜", "pair_quest", _B),
+    "pairquest:claim": ("Забрать опыт", "🎁", "gift", _OK),
+    "top:season": ("За месяц", "🏅", "season_top", _B),
+    "showcase": ("Витрина", "🏅", "showcase", _B),
     "inv:rings": ("Кольца", "💍", "ring", _B),
     "quests": ("Поручения", "📜", "quest_book", _B),
     "quests:claim": ("Забрать награду", "🎁", "gift", _OK),
@@ -198,7 +205,10 @@ def icon_emoji(u: str):
     return u
 
 
-BUTTON_ICON_FALLBACKS = {"ring_shop": "shop", "quest_book": "help"}
+BUTTON_ICON_FALLBACKS = {
+    "ring_shop": "shop", "quest_book": "help", "history": "adm_log",
+    "pair_quest": "quest_book", "season_top": "top_lvl", "showcase": "top",
+}
 
 
 def button_icon(icon: str) -> str:
@@ -456,6 +466,7 @@ class EconomyBot(commands.Bot):
 
     async def setup_hook(self):
         self.db = await aiosqlite.connect(DB_PATH)
+        await self.db.create_function("casefold", 1, str.casefold, deterministic=True)
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.execute("PRAGMA synchronous=NORMAL")
         await self.db.executescript("""
@@ -548,6 +559,34 @@ class EconomyBot(commands.Bot):
                 guild_id INTEGER NOT NULL, room_id INTEGER NOT NULL,
                 PRIMARY KEY (guild_id, room_id)
             )
+        """)
+        await self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS coin_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL, amount INTEGER NOT NULL, kind TEXT NOT NULL,
+                detail TEXT NOT NULL, status TEXT NOT NULL, role_ref INTEGER, created INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS coin_history_user ON coin_history(guild_id,user_id,id DESC);
+            CREATE TABLE IF NOT EXISTS pair_weekly (
+                guild_id INTEGER, a INTEGER, b INTEGER, since INTEGER, week TEXT,
+                voice INTEGER NOT NULL DEFAULT 0, claimed INTEGER NOT NULL DEFAULT 0, last_minute INTEGER NOT NULL DEFAULT -1,
+                PRIMARY KEY(guild_id,a,b,since,week)
+            );
+            CREATE TABLE IF NOT EXISTS season_xp (
+                guild_id INTEGER, month TEXT, user_id INTEGER, xp INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,month,user_id)
+            );
+            CREATE TABLE IF NOT EXISTS season_closed (
+                guild_id INTEGER, month TEXT, PRIMARY KEY(guild_id,month)
+            );
+            CREATE TABLE IF NOT EXISTS season_awards (
+                guild_id INTEGER, month TEXT, user_id INTEGER, place INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,month,user_id)
+            );
+            CREATE TABLE IF NOT EXISTS profile_showcase (
+                guild_id INTEGER, user_id INTEGER, badges TEXT NOT NULL,
+                PRIMARY KEY(guild_id,user_id)
+            );
         """)
         # банка больше нет: всё, что лежало в нём, переходит на баланс
         await self.db.execute("UPDATE users SET balance=balance+bank, bank=0 WHERE bank>0")
@@ -662,9 +701,22 @@ class EconomyBot(commands.Bot):
             await db.execute(
                 "UPDATE users SET balance=balance+?, duel_wins=duel_wins+? WHERE guild_id=? AND user_id=?",
                 (amount, int(duel), guild_id, recipient))
+            from .ledger import record
+            kind = "duel" if duel else "transfer"
+            await record(db, guild_id, sender, -amount, kind, f"<@{recipient}>")
+            await record(db, guild_id, recipient, amount, kind, f"<@{sender}>")
         return True
 
-    async def add(self, guild_id: int, user_id: int, amount: int, field: str = "balance"):
+    async def add(self, guild_id: int, user_id: int, amount: int, field: str = "balance",
+                  *, reason: str | None = None, detail: str = ""):
+        if field == "balance" and reason:
+            from .ledger import record
+            async with self.transaction() as db:
+                await self.ensure_user(db, guild_id, user_id)
+                await db.execute("UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=?",
+                                 (amount, guild_id, user_id))
+                await record(db, guild_id, user_id, amount, reason, detail)
+            return
         await self.get_user(guild_id, user_id)
         await self.db.execute(
             f"UPDATE users SET {field}={field}+? WHERE guild_id=? AND user_id=?",

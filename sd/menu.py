@@ -11,7 +11,7 @@ from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
 from .levels import PATHS, RANK_STEP, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, work_pay, xp_for
-from . import market, marriage, quests, top
+from . import ledger, market, marriage, pair_quests, quests, showcase, top
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
 
@@ -70,6 +70,7 @@ SECTIONS = [
     ("profile", "Профиль", "Твой уровень, титул и место в топе"),
     ("inventory", "Инвентарь", "Твои роли и кольца"),
     ("quests", "Поручения двора", "Еженедельные задания и награда"),
+    ("history", "История монет", "Личная выписка из Казны"),
     ("path", "Путь и титул", "Знать или Вера, следующее звание"),
     ("top", "Топ двора", "Лучшие по уровню и по монетам"),
     ("ach", "Достижения", "Награды за успехи"),
@@ -173,12 +174,18 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await achievements.callback(inter, None)
     elif key in ("top", "top:lvl"):
         await top.show_top(inter, "lvl")
-    elif key == "top:coin":
-        await top.show_top(inter, "coin")
+    elif key in ("top:coin", "top:season"):
+        await top.show_top(inter, key.split(":")[1])
     elif key == "balance":
         await balance.callback(inter, None)
     elif key == "daily":
         await daily.callback(inter)
+    elif key == "showcase":
+        await showcase.show(inter)
+    elif key == "showcase:save":
+        await showcase.save(inter, (inter.data or {}).get("values") or [])
+    elif key == "showcase:clear":
+        await showcase.save(inter, [])
     elif key == "help":
         await help_cmd.callback(inter)
     elif key == "couple":
@@ -194,6 +201,10 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await quests.show(inter)
     elif key == "quests:claim":
         await quests.claim(inter)
+    elif key == "pairquest":
+        await pair_quests.show(inter)
+    elif key == "pairquest:claim":
+        await pair_quests.claim(inter)
     elif key == "rings":
         await rings_shop.callback(inter)
     elif key == "ringbook":
@@ -313,7 +324,8 @@ async def on_interaction(inter: discord.Interaction):
     if key in ("ringbook:action", "ringbook:giftselect", "inv:filter", "anniversary:pick"):
         vals = (inter.data or {}).get("values") or [""]
         side = str(vals[0])
-    if key not in BUTTONS and key not in ("inv:filter", "anniversary:pick") and not key.startswith(("mk:", "inv:roles:")):
+    if (key not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:clear")
+            and not key.startswith(("mk:", "inv:roles:", "history:"))):
         return
     try:
         if await wrong_channel(inter):
@@ -321,6 +333,16 @@ async def on_interaction(inter: discord.Interaction):
         if too_fast(inter.user.id):
             return await inter.response.send_message(
                 "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
+        if key == "history" or key.startswith("history:"):
+            cursor = key.partition(":")[2]
+            if cursor and (not cursor.isascii() or not cursor.isdecimal() or len(cursor) > 18):
+                return await inter.response.send_message("Эта страница истории недоступна.", ephemeral=True)
+            if inter.message and inter.message.flags.ephemeral:
+                await inter.response.defer()
+                inter.extras["sd_edit"] = True
+            else:
+                await inter.response.defer(ephemeral=True, thinking=True)
+            return await ledger.show(inter, int(cursor) if cursor else None)
         if key == "roomname":
             return await inter.response.send_modal(RoomNameModal())
         if key in MENU_MODALS:

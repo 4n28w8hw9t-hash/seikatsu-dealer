@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 
 from .core import E, bot, button_icon, embed, fmt, send_card
+from .ledger import record as ledger_record
 
 COURT_TZ = timezone(timedelta(hours=3))
 QUESTS = (
@@ -85,6 +86,7 @@ async def claim(inter: discord.Interaction):
             await db.execute(
                 "UPDATE weekly_quests SET claimed=1 WHERE guild_id=? AND user_id=? AND week=?",
                 (g, uid, week))
+            await ledger_record(db, g, uid, REWARD, "quests")
             note = f"🎁 Получено **{fmt(REWARD)}** за все поручения."
     await show(inter, note)
 

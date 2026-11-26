@@ -114,12 +114,15 @@ async def get_xp(guild_id: int, user_id: int) -> int:
 
 async def add_xp(guild_id: int, user_id: int, amount: int) -> int | None:
     """Начисляет опыт игроку и его паре. Возвращает новый уровень, если на нём меняется титул."""
-    old = await get_xp(guild_id, user_id)
-    await bot.add(guild_id, user_id, amount, "xp")
-    await bot.db.execute(
-        "UPDATE marriages SET xp=xp+? WHERE guild_id=? AND (a=? OR b=?)",
-        (amount, guild_id, user_id, user_id))
-    await bot.db.commit()
+    from .season import record as record_season
+    async with bot.transaction() as db:
+        await bot.ensure_user(db, guild_id, user_id)
+        async with db.execute("SELECT xp FROM users WHERE guild_id=? AND user_id=?", (guild_id, user_id)) as cur:
+            old = (await cur.fetchone())[0] or 0
+        await db.execute("UPDATE users SET xp=xp+? WHERE guild_id=? AND user_id=?", (amount, guild_id, user_id))
+        await db.execute("UPDATE marriages SET xp=xp+? WHERE guild_id=? AND (a=? OR b=?)",
+                         (amount, guild_id, user_id, user_id))
+        await record_season(db, guild_id, user_id, amount)
     a, b = level_of(old), level_of(old + amount)
     reached = [lvl for lvl in RANK_LEVELS if a < lvl <= b]
     return reached[-1] if reached else None
@@ -166,9 +169,11 @@ async def on_message(message: discord.Message):
 @tasks.loop(minutes=1)
 async def tick():
     try:
+        from .pair_quests import record_rooms
         from .quests import record
         now = time.time()
         for guild in bot.guilds:  # опыт за голосовой чат
+            occupied = {}
             for vc in guild.voice_channels:
                 if guild.afk_channel and vc.id == guild.afk_channel.id:
                     continue
@@ -179,6 +184,7 @@ async def tick():
                         continue
                     ids.append(uid)
                 if len(ids) >= 2:  # в одиночку опыт не идёт
+                    occupied[vc.id] = frozenset(ids)
                     for uid in ids:
                         await add_xp(guild.id, uid, XP_VOICE)
                         async with bot.transaction() as db:
@@ -186,11 +192,13 @@ async def tick():
                                 "UPDATE users SET voice_min=voice_min+1 WHERE guild_id=? AND user_id=?",
                                 (guild.id, uid))
                             await record(db, guild.id, uid, "voice", now)
+            await record_rooms(guild.id, occupied, now)
     except Exception as ex:
         print("Ошибка начисления опыта в войсе:", repr(ex))
     from .market import recover_role_purchases
     from .marriage import clean_retired_rooms, clean_rooms
-    for job in (clean_rooms, clean_retired_rooms, recover_role_purchases):
+    from .season import close_seasons
+    for job in (clean_rooms, clean_retired_rooms, recover_role_purchases, close_seasons):
         try:
             await job()
         except Exception as ex:

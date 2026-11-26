@@ -21,12 +21,12 @@ async def coinflip(inter: discord.Interaction, ставка: app_commands.Range[
         return await reply(inter, "Недостаточно монет для ставки", rows=[["balance", "daily"]])
     result = random.choice(["орёл", "решка"])
     if result == выбор.value:
-        await bot.add(g, uid, ставка)
+        await bot.add(g, uid, ставка, reason="flip")
         await bot.add(g, uid, 1, "flip_wins")
         msg, col = f"Выпал **{result}** — ты забираешь **{fmt(ставка * 2)}**! 🎉", discord.Color.green()
         key = "coinflip"   # шут с монеткой — он же баннер победы
     else:
-        await bot.add(g, uid, -ставка)
+        await bot.add(g, uid, -ставка, reason="flip")
         msg, col = f"Выпал **{result}** — ставка **{fmt(ставка)}** сгорает 😢", discord.Color.red()
         key = "flip_lose"
     if key not in getattr(bot, "banners", {}):

@@ -1,11 +1,18 @@
 """Рынок ролей: игроки создают свои роли, выставляют их на продажу и получают процент."""
+import asyncio
+import base64
+import binascii
+from dataclasses import dataclass, replace
 import re
 import time
 
 import discord
 from discord import app_commands
 
+import art
 from .core import ECON_LOCK, _B, _G, bot, btn, icon_emoji, embed, fmt, member_name, reply, send_card
+
+from .ledger import record as ledger_record, role_status
 
 ROLE_CREATE_PRICE = 10_000   # создание роли
 ROLE_LIMIT = 3               # сколько ролей может создать один человек
@@ -73,57 +80,135 @@ async def market(inter: discord.Interaction):
     await show_market(inter)
 
 
-async def show_market(inter: discord.Interaction, page: int = 0):
-    guild_id = inter.guild_id
-    async with bot.db.execute(
-        "SELECT COUNT(*) FROM custom_roles WHERE guild_id=? AND price IS NOT NULL", (guild_id,)
-    ) as cur:
+MARKET_SORTS = {
+    "p": ("Популярные", "sold DESC, price ASC, id ASC"),
+    "c": ("Сначала дешевле", "price ASC, id ASC"),
+    "h": ("Сначала дороже", "price DESC, id ASC"),
+    "n": ("Сначала новые", "created DESC, id DESC"),
+}
+
+
+@dataclass(frozen=True)
+class MarketView:
+    sort: str = "p"
+    page: int = 0
+    query: str = ""
+
+    def token(self):
+        encoded = base64.urlsafe_b64encode(self.query.encode()).decode().rstrip("=")
+        return f"{self.sort}.{self.page}.{encoded}"
+
+    @classmethod
+    def parse(cls, token):
+        if not token:
+            return cls()
+        parts = token.split(".", 2)
+        if len(parts) != 3 or parts[0] not in MARKET_SORTS or not re.fullmatch(r"[0-9]{1,9}", parts[1]):
+            return cls()
+        try:
+            encoded = parts[2]
+            if len(encoded) > 48 or not re.fullmatch(r"[A-Za-z0-9_-]*", encoded):
+                return cls()
+            query = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode().strip()
+        except (UnicodeError, binascii.Error):
+            return cls()
+        return cls(parts[0], int(parts[1]), query)
+
+
+def market_back(state):
+    return discord.ui.Button(label="К списку", custom_id=f"sd:mk:list:{state.token()}", style=_G)
+
+
+class MarketSearch(discord.ui.Modal, title="Поиск ролей"):
+    query = discord.ui.TextInput(label="Название или часть названия", required=False, max_length=18)
+
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+        self.query.default = state.query
+
+    async def on_submit(self, inter: discord.Interaction):
+        query = self.query.value.strip()
+        if len(query.encode()) > 36:
+            return await inter.response.send_message("Сократи фразу для поиска.", ephemeral=True)
+        from .menu import run_fn
+        state = replace(self.state, query=query, page=0)
+        await run_fn(inter, lambda i: show_market(i, state), "поиск ролей")
+
+
+async def show_market(inter: discord.Interaction, state: MarketView | None = None):
+    state = state or MarketView()
+    params = [inter.guild_id]
+    where = "guild_id=? AND price IS NOT NULL"
+    if state.query:
+        where += " AND instr(casefold(name),?)>0"
+        params.append(state.query.casefold())
+    async with bot.db.execute(f"SELECT COUNT(*) FROM custom_roles WHERE {where}", params) as cur:
         total = (await cur.fetchone())[0]
     pages = max(1, (total + MARKET_PAGE_SIZE - 1) // MARKET_PAGE_SIZE)
-    page = max(0, min(page, pages - 1))
+    page = max(0, min(state.page, pages - 1))
+    state = replace(state, page=page)
     offset = page * MARKET_PAGE_SIZE
+    _, order = MARKET_SORTS[state.sort]
     cur = await bot.db.execute(
-        f"SELECT {','.join(FIELDS)} FROM custom_roles WHERE guild_id=? AND price IS NOT NULL "
-        "ORDER BY sold DESC, price ASC, id ASC LIMIT ? OFFSET ?", (guild_id, MARKET_PAGE_SIZE, offset))
+        f"SELECT {','.join(FIELDS)} FROM custom_roles WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
+        (*params, MARKET_PAGE_SIZE, offset))
     rows = [dict(zip(FIELDS, r)) for r in await cur.fetchall()]
     lines = []
     for i, r in enumerate(rows, start=offset + 1):
         owner = await member_name(inter.guild, r["owner_id"])
-        lines.append(f"`{i}.` <@&{r['role_id']}> — **{fmt(r['price'])}** · "
+        lines.append(f"**{i}.** <@&{r['role_id']}> — **{fmt(r['price'])}** · "
                      f"продаж: {r['sold']} · от {owner}")
-    text = "\n".join(lines) if lines else "Пока никто ничего не выставил."
+    text = "\n".join(lines) if lines else ("По этому запросу ролей нет." if state.query
+                                          else "Пока никто ничего не выставил.")
+    if state.query:
+        text = f"**Поиск:** {discord.utils.escape_markdown(state.query)}\n\n{text}"
     e = embed("🛒 Магазин ролей", text +
-              f"\n\nСвою роль можно создать за **{fmt(ROLE_CREATE_PRICE)}** и продавать другим.\n"
-              f"-# Владелец получает {round(SELLER_SHARE * 100)}% с продажи · Страница {page + 1} из {pages}")
-    rows_ui = []
+              f"\n\nСвою роль можно создать за **{fmt(ROLE_CREATE_PRICE)}**.\n"
+              f"-# Найдено: {total} · Страница {page + 1} из {pages} · Продавцу {round(SELLER_SHARE * 100)}%")
+    sort = discord.ui.Select(
+        custom_id=f"sd:mk:sort:{state.token()}", placeholder="Сортировка",
+        options=[discord.SelectOption(label=label, value=key, default=key == state.sort)
+                 for key, (label, _) in MARKET_SORTS.items()])
+    rows_ui = [[sort]]
     if rows:
         rows_ui.append([discord.ui.Select(
-            custom_id="sd:mk:pick", placeholder="Выбери роль, чтобы купить",
+            custom_id=f"sd:mk:pick:{state.token()}", placeholder="Открой роль, чтобы посмотреть цвет",
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
                                           description=f"{r['price']} монет · продаж: {r['sold']}"[:100])
                      for r in rows])])
+    actions = [discord.ui.Button(label="Поиск", custom_id=f"sd:mk:search:{state.token()}", style=_B)]
+    if state.query:
+        actions.append(discord.ui.Button(label="Сбросить поиск",
+                         custom_id=f"sd:mk:list:{MarketView(sort=state.sort).token()}", style=_G))
     if pages > 1:
-        rows_ui.append([
-            discord.ui.Button(label="Назад", custom_id=f"sd:mk:page:{page - 1 if page else 'start'}",
-                              style=_G, disabled=page == 0),
-            discord.ui.Button(label="Дальше", custom_id=f"sd:mk:page:{page + 1}", style=_G,
-                              disabled=page + 1 >= pages),
-        ])
-    rows_ui.append(["rolecreate", "roles"])
+        for jump, label in ((-1,"Назад"), (1,"Дальше")):
+            target = page + jump
+            key = replace(state, page=target).token() if 0 <= target < pages else label
+            actions.append(discord.ui.Button(label=label, custom_id=f"sd:mk:list:{key}",
+                                            style=_G, disabled=not 0 <= target < pages))
+    rows_ui.extend([actions, ["rolecreate", "roles"]])
     await send_card(inter, e, "shop", rows=rows_ui, allowed_mentions=discord.AllowedMentions.none())
 
 
-async def show_for_sale(inter: discord.Interaction, ref: int):
+async def show_for_sale(inter: discord.Interaction, ref: int, state: MarketView | None = None):
+    state = state or MarketView()
+    back = market_back(state)
     r = await get_role(inter.guild_id, ref)
     if not r or r["price"] is None or await forget_missing(inter.guild, r):
-        return await reply(inter, "Эта роль уже не продаётся", rows=[["market"]])
+        return await reply(inter, "Эта роль уже не продаётся", rows=[[back]])
     owner = await member_name(inter.guild, r["owner_id"])
     e = embed(f"🎭 {r['name']}", f"Цвет: **{color_of(r)}**\nСоздатель: **{owner}**\n"
               f"Продаж: **{r['sold']}**\nЦена: **{fmt(r['price'])}**",
               discord.Colour(r["color"]))
     buy = discord.ui.Button(label=f"Купить за {r['price']}", emoji=icon_emoji("🛍️"),
-                            style=discord.ButtonStyle.success, custom_id=f"sd:mk:buy:{r['id']}")
-    await send_card(inter, e, "shop", rows=[[buy, "market"]])
+                            style=discord.ButtonStyle.success, custom_id=f"sd:mk:buy:{ref}:{state.token()}")
+    try:
+        png = await asyncio.to_thread(art.role_swatch, r["name"], r["color"])
+    except Exception as ex:
+        print("Не нарисован образец роли:", repr(ex))
+        return await send_card(inter, e, "shop", rows=[[buy, back]])
+    await reply(inter, embed=e, image=("role-color.png", png), rows=[[buy, back]])
 
 
 async def reserve_role_purchase(guild_id: int, user_id: int, role: dict) -> str:
@@ -148,6 +233,8 @@ async def reserve_role_purchase(guild_id: int, user_id: int, role: dict) -> str:
         await db.execute(
             "INSERT INTO pending_role_purchases(guild_id,user_id,role_ref,role_id,price) VALUES(?,?,?,?,?)",
             (*key, role["role_id"], role["price"]))
+        await ledger_record(db, guild_id, user_id, -role["price"], "role_buy",
+                            discord.utils.escape_markdown(role["name"]), status="pending", role_ref=role["id"])
         return "reserved"
 
 
@@ -164,7 +251,7 @@ async def settle_role_purchase(guild_id: int, user_id: int, ref: int, *, granted
             return None
         role_id, price = pending
         async with db.execute(
-            "SELECT owner_id FROM custom_roles WHERE guild_id=? AND id=? AND role_id=?",
+            "SELECT owner_id,name FROM custom_roles WHERE guild_id=? AND id=? AND role_id=?",
             (guild_id, ref, role_id)
         ) as cur:
             seller = await cur.fetchone()
@@ -173,6 +260,7 @@ async def settle_role_purchase(guild_id: int, user_id: int, ref: int, *, granted
             row = await db.execute(
                 "INSERT OR IGNORE INTO role_owners(guild_id,user_id,role_ref,worn) VALUES(?,?,?,1)", key)
             sold = row.rowcount == 1
+        detail = discord.utils.escape_markdown(seller[1]) if seller else f"Роль №{ref}"
         if sold:
             owner_id = seller[0]
             share = int(price * SELLER_SHARE)
@@ -181,10 +269,14 @@ async def settle_role_purchase(guild_id: int, user_id: int, ref: int, *, granted
                              (share, guild_id, owner_id))
             await db.execute("UPDATE custom_roles SET sold=sold+1, earned=earned+? WHERE guild_id=? AND id=?",
                              (share, guild_id, ref))
+            await role_status(db, guild_id, user_id, ref, "done")
+            await ledger_record(db, guild_id, owner_id, share, "role_sell", detail)
         else:
             await bot.ensure_user(db, guild_id, user_id)
             await db.execute("UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=?",
                              (price, guild_id, user_id))
+            await role_status(db, guild_id, user_id, ref, "refunded")
+            await ledger_record(db, guild_id, user_id, price, "role_refund", detail)
         await db.execute("DELETE FROM pending_role_purchases WHERE guild_id=? AND user_id=? AND role_ref=?", key)
         return "sold" if sold else "refunded"
 
@@ -208,36 +300,37 @@ async def recover_role_purchases():
             print("Покупка роли ожидает сверки:", guild_id, ref, repr(ex))
 
 
-async def buy_role(inter: discord.Interaction, ref: int):
+async def buy_role(inter: discord.Interaction, ref: int, state: MarketView | None = None):
+    back = market_back(state or MarketView())
     g, uid = inter.guild_id, inter.user.id
     r = await get_role(g, ref)
     if not r or r["price"] is None or await forget_missing(inter.guild, r):
-        return await reply(inter, "Эта роль уже не продаётся", rows=[["market"]])
+        return await reply(inter, "Эта роль уже не продаётся", rows=[[back]])
     state = await reserve_role_purchase(g, uid, r)
     pending_note = "Покупка ещё проверяется. Бот завершит её или вернёт монеты автоматически."
     if state == "owned":
-        return await reply(inter, "Эта роль у тебя уже есть", rows=[["roles", "market"]])
+        return await reply(inter, "Эта роль у тебя уже есть", rows=[["roles", back]])
     if state == "pending":
-        return await reply(inter, pending_note, rows=[["inventory", "market"]])
+        return await reply(inter, pending_note, rows=[["inventory", back]])
     if state == "insufficient":
         return await reply(inter, f"Не хватает монет: нужно **{fmt(r['price'])}**",
-                           rows=[["daily", "market"]])
+                           rows=[["daily", back]])
 
     try:
         try:
             await inter.user.add_roles(discord.Object(id=r["role_id"]), reason="Покупка в магазине ролей")
         except (discord.Forbidden, discord.NotFound):
             await settle_role_purchase(g, uid, ref, granted=False)
-            return await reply(inter, "Роль не выдана. Монеты возвращены.", rows=[["market"]])
+            return await reply(inter, "Роль не выдана. Монеты возвращены.", rows=[[back]])
         state = await settle_role_purchase(g, uid, ref, granted=True)
     except Exception as ex:
         print("Не завершена покупка роли:", g, ref, repr(ex))
-        return await reply(inter, pending_note, rows=[["inventory", "market"]])
+        return await reply(inter, pending_note, rows=[["inventory", back]])
     if state != "sold":
-        return await reply(inter, "Покупка отменена. Монеты возвращены.", rows=[["market"]])
+        return await reply(inter, "Покупка отменена. Монеты возвращены.", rows=[[back]])
     e = embed(f"🛍️ Куплено: {r['name']}", f"Списано **{fmt(r['price'])}**. Роль уже на тебе.\n"
               "Снять или надеть её можно в инвентаре.", discord.Colour(r["color"]))
-    await send_card(inter, e, "shop", rows=[["inventory", "market"]])
+    await send_card(inter, e, "shop", rows=[["inventory", back]])
 
 
 # ═════════ Создание роли ═════════
@@ -312,7 +405,7 @@ async def create_role(inter: discord.Interaction, name: str, color_raw: str):
         await inter.user.add_roles(role, reason="Создатель роли")
     except discord.HTTPException:
         pass
-    await bot.add(g.id, uid, -ROLE_CREATE_PRICE)
+    await bot.add(g.id, uid, -ROLE_CREATE_PRICE, reason="role_create", detail=discord.utils.escape_markdown(name))
     cur = await bot.db.execute(
         "INSERT INTO custom_roles(guild_id,owner_id,role_id,name,color,price,created) "
         "VALUES(?,?,?,?,?,NULL,?)", (g.id, uid, role.id, name, color, int(time.time())))
@@ -417,7 +510,7 @@ async def inventory_roles(inter: discord.Interaction, filter_key="all", page=0):
     rows = [[btn("inventory", "Роли"), btn("inv:rings", style=_G)], [filters]]
     if visible:
         rows.append([discord.ui.Select(
-            custom_id="sd:mk:mine", placeholder="Выбери роль",
+            custom_id=f"sd:mk:mine:{filter_key}:{page}", placeholder="Выбери роль",
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
                                           emoji=icon_emoji("⭐") if r["owner_id"] == uid else None)
                      for r in visible])])
@@ -465,41 +558,55 @@ async def inventory_rings(inter: discord.Interaction):
     await send_card(inter, embed("🎒 Инвентарь · Кольца", text), "shop", rows=rows)
 
 
-async def show_mine(inter: discord.Interaction, ref: int):
+def inventory_view(parts):
+    if len(parts) == 2 and parts[0] in ROLE_FILTERS and re.fullmatch(r"[0-9]{1,9}", parts[1]):
+        return parts[0], int(parts[1])
+    return None
+
+
+def inventory_back(state):
+    if state is None:
+        return "roles"
+    return discord.ui.Button(label="К списку", custom_id=f"sd:inv:roles:{state[0]}:{state[1]}", style=_G)
+
+
+async def show_mine(inter: discord.Interaction, ref: int, state=None):
+    suffix = f":{state[0]}:{state[1]}" if state is not None else ""
+    back = inventory_back(state)
     roles = {r["id"]: r for r in await owned_roles(inter.guild_id, inter.user.id)}
     r = roles.get(ref)
     if not r or await forget_missing(inter.guild, r):
-        return await reply(inter, "Этой роли у тебя нет", rows=[["roles"]])
+        return await reply(inter, "Этой роли у тебя нет", rows=[[inventory_back(state)]])
     own = r["owner_id"] == inter.user.id
     info = [f"Цвет: **{color_of(r)}**", f"Сейчас: **{'надета' if r['worn'] else 'снята'}**"]
     btn = []
     btn.append(discord.ui.Button(label="Снять" if r["worn"] else "Надеть",
                                  emoji=icon_emoji("👕"), style=discord.ButtonStyle.secondary,
-                                 custom_id=f"sd:mk:{'off' if r['worn'] else 'on'}:{ref}"))
+                                 custom_id=f"sd:mk:{'off' if r['worn'] else 'on'}:{ref}{suffix}"))
     if own:
         info.append(f"Продаж: **{r['sold']}** · заработано: **{fmt(r['earned'])}**")
         if r["price"] is None:
             info.append("В магазине: **нет**")
             btn.append(discord.ui.Button(label="Выставить на продажу", emoji=icon_emoji("🏷️"),
                                          style=discord.ButtonStyle.success,
-                                         custom_id=f"sd:mk:sell:{ref}"))
+                                         custom_id=f"sd:mk:sell:{ref}{suffix}"))
         else:
             info.append(f"В магазине за **{fmt(r['price'])}**")
             btn.append(discord.ui.Button(label="Изменить цену", emoji=icon_emoji("🏷️"),
                                          style=discord.ButtonStyle.primary,
-                                         custom_id=f"sd:mk:sell:{ref}"))
+                                         custom_id=f"sd:mk:sell:{ref}{suffix}"))
             btn.append(discord.ui.Button(label="Снять с продажи", emoji=icon_emoji("✖️"),
                                          style=discord.ButtonStyle.danger,
-                                         custom_id=f"sd:mk:unsell:{ref}"))
+                                         custom_id=f"sd:mk:unsell:{ref}{suffix}"))
     e = embed(f"🎭 {r['name']}" + (" ⭐" if own else ""), "\n".join(info), discord.Colour(r["color"]))
-    await send_card(inter, e, "inv", rows=[btn + ["roles", "inventory"]])
+    await send_card(inter, e, "inv", rows=[btn + [back, "inventory"]])
 
 
-async def wear(inter: discord.Interaction, ref: int, on: bool):
+async def wear(inter: discord.Interaction, ref: int, on: bool, state=None):
     roles = {r["id"]: r for r in await owned_roles(inter.guild_id, inter.user.id)}
     r = roles.get(ref)
     if not r:
-        return await reply(inter, "Этой роли у тебя нет", rows=[["roles"]])
+        return await reply(inter, "Этой роли у тебя нет", rows=[[inventory_back(state)]])
     try:
         obj = discord.Object(id=r["role_id"])
         if on:
@@ -507,38 +614,38 @@ async def wear(inter: discord.Interaction, ref: int, on: bool):
         else:
             await inter.user.remove_roles(obj, reason="Снял свою роль")
     except discord.HTTPException:
-        return await reply(inter, NO_RIGHTS)
+        return await reply(inter, NO_RIGHTS, rows=[[inventory_back(state)]])
     await bot.db.execute("UPDATE role_owners SET worn=? WHERE guild_id=? AND role_ref=? AND user_id=?",
                          (int(on), inter.guild_id, ref, inter.user.id))
     await bot.db.commit()
-    await show_mine(inter, ref)
+    await show_mine(inter, ref, state)
 
 
-async def set_price(inter: discord.Interaction, ref: int, price: int | None):
+async def set_price(inter: discord.Interaction, ref: int, price: int | None, state=None):
     r = await get_role(inter.guild_id, ref)
     if not r or r["owner_id"] != inter.user.id:
-        return await reply(inter, "Продавать можно только свою роль", rows=[["roles"]])
+        return await reply(inter, "Продавать можно только свою роль", rows=[[inventory_back(state)]])
     if price is not None and not PRICE_MIN <= price <= PRICE_MAX:
         return await reply(inter, f"Цена — от {PRICE_MIN} до {PRICE_MAX:,}".replace(",", " "),
-                           rows=[["roles"]])
+                           rows=[[inventory_back(state)]])
     await bot.db.execute("UPDATE custom_roles SET price=? WHERE id=?", (price, ref))
     await bot.db.commit()
-    await show_mine(inter, ref)
+    await show_mine(inter, ref, state)
 
 
 class PriceModal(discord.ui.Modal, title="Цена роли"):
     price = discord.ui.TextInput(label="Сколько монет", placeholder="например 2000", max_length=7)
 
-    def __init__(self, ref: int):
+    def __init__(self, ref: int, state=None):
         super().__init__()
-        self.ref = ref
+        self.ref, self.state = ref, state
 
     async def on_submit(self, inter: discord.Interaction):
         raw = self.price.value.strip().replace(" ", "")
         if not raw.isdigit():
             return await inter.response.send_message("Нужно целое число", ephemeral=True)
         from .menu import run_fn
-        await run_fn(inter, lambda i: set_price(i, self.ref, int(raw)))
+        await run_fn(inter, lambda i: set_price(i, self.ref, int(raw), self.state))
 
 
 # ═════════ Кнопки и списки рынка (sd:mk:...) ═════════
@@ -546,30 +653,43 @@ def modal_for(key: str):
     """Окно ввода для кнопки, если оно нужно, иначе None."""
     if key == "rolecreate":
         return CreateRoleModal()
-    m = re.fullmatch(r"mk:sell:(\d+)", key)
-    return PriceModal(int(m.group(1))) if m else None
+    parts = key.split(":")
+    if len(parts) == 3 and parts[:2] == ["mk", "search"]:
+        return MarketSearch(MarketView.parse(parts[2]))
+    if len(parts) in (3, 5) and parts[:2] == ["mk", "sell"] and parts[2].isdecimal():
+        return PriceModal(int(parts[2]), inventory_view(parts[3:]))
+    return None
 
 
 async def handle(inter: discord.Interaction, key: str):
     values = (inter.data or {}).get("values") or []
     parts = key.split(":")
-    act = parts[1] if len(parts) > 1 else ""
+    if len(parts) < 2:
+        return
+    _, act, *args = parts
     if act in ("pick", "mine"):
-        if not values or not values[0].isdigit():
+        if not values or not values[0].isdecimal():
             return
         ref = int(values[0])
-        return await (show_for_sale(inter, ref) if act == "pick" else show_mine(inter, ref))
-    if len(parts) != 3 or not parts[2].isdigit():
+        if act == "pick":
+            return await show_for_sale(inter, ref, MarketView.parse(args[0] if args else ""))
+        return await show_mine(inter, ref, inventory_view(args))
+    if act in ("list", "sort") and len(args) == 1:
+        state = MarketView.parse(args[0])
+        if act == "sort" and values and values[0] in MARKET_SORTS:
+            state = replace(state, sort=values[0], page=0)
+        return await show_market(inter, state)
+    if not args or not args[0].isdecimal():
         return
-    ref = int(parts[2])
-    if act == "page":
-        await show_market(inter, ref)
+    ref = int(args[0])
+    if act == "page":  # кнопки в старых сообщениях
+        await show_market(inter, MarketView(page=ref))
     elif act == "buy":
-        await buy_role(inter, ref)
+        await buy_role(inter, ref, MarketView.parse(args[1] if len(args) > 1 else ""))
     elif act in ("on", "off"):
-        await wear(inter, ref, act == "on")
+        await wear(inter, ref, act == "on", inventory_view(args[1:]))
     elif act == "unsell":
-        await set_price(inter, ref, None)
+        await set_price(inter, ref, None, inventory_view(args[1:]))
 
 
 async def delete_role(guild: discord.Guild, ref: int) -> bool:

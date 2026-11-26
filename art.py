@@ -413,6 +413,19 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
     y = _bar(d, tx, 140, right, data["have"], max(1, data["need"]),
              f"Опыт {data['have']:,} / {data['need']:,}".replace(",", " "))
     _cells(img, d, data["cells"], tx, y + 22, right, cols=2)
+    badges = data.get("showcase") or []
+    if badges:
+        bx = tx
+        for key, label, name, _ in badges:
+            icon = _icon(name, 28)
+            if icon is None and key == "pair:weekly":
+                icon = _icon("couple", 28)
+            if icon:
+                img.paste(icon, (bx, H - 47), icon)
+            width = (right - tx) // 3
+            label, font = _pfit(d, label, "sc6", 18, width - 40, 12)
+            _t(d, (bx + 33, H - 43), label, font, P_GOLD)
+            bx += width
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")
@@ -469,6 +482,22 @@ def _icon(name, size):
     if not name or not os.path.exists(p):
         return None
     return Image.open(p).convert("RGBA").resize((size, size), Image.LANCZOS)
+
+
+def role_swatch(name: str, color: int) -> bytes:
+    """Показывает цвет роли и пример имени на тёмном фоне."""
+    img = _pbg(730, 165, cx=0.34)
+    draw = ImageDraw.Draw(img)
+    rgb = ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+    draw.rounded_rectangle((28, 36, 124, 131), radius=14, fill=rgb, outline=P_CREAM, width=2)
+    _t(draw, (156, 29), f"Цвет роли · #{color:06X}", _pfont("sc6", 24), P_GOLD)
+    draw.rounded_rectangle((149, 69, 698, 130), radius=9, fill=(43, 45, 49))
+    text, font = _pfit(draw, name, "text", 34, 512)
+    _t(draw, (164, 80), text, font, rgb)
+    _pframe(img)
+    out = _io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
 
 
 def ring_collection_card(banner_path, rings: list[dict], W: int = 1000, H: int = 370) -> bytes:

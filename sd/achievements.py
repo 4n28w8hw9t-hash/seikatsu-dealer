@@ -3,6 +3,7 @@ import discord
 from discord import app_commands
 
 from .core import E, AFTER_ACTION, bot, embed, fmt, send_card
+from .ledger import record as ledger_record
 from .levels import level_of
 
 # редкость: (название, значок, награда в монетах)
@@ -76,6 +77,8 @@ async def unlock(guild_id: int, user_id: int) -> list[str]:
         await db.execute(
             "UPDATE users SET ach=?, balance=balance+? WHERE guild_id=? AND user_id=?",
             (",".join(sorted(unlocked.union(new))), reward, guild_id, user_id))
+        await ledger_record(db, guild_id, user_id, reward, "achievement",
+                            ", ".join(BY_KEY[key][1] for key in new))
     return new
 
 
