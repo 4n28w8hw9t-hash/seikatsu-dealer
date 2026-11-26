@@ -188,7 +188,7 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
         img = await asyncio.to_thread(
             art.panel_card, banner, m.display_name, f"@{m.name} · канцелярия двора", "",
             ((xp - lo) / max(hi - lo, 1), f"{lvl} уровень", f"до {lvl + 1}: {num(hi - xp)} опыта"),
-            tiles, lines, 1200, avatar)
+            tiles, lines, 1000, avatar)
         e = discord.Embed(color=discord.Color.from_rgb(150, 30, 40))
         e.set_image(url="attachment://staff.jpg")
         e.set_footer(text="Изменения сохраняются сразу · все действия пишутся в журнал")
@@ -227,10 +227,47 @@ class NumModal(discord.ui.Modal):
         await self.panel.apply(inter, self.kind, n)
 
 
+class StaffLayout(discord.ui.LayoutView):
+    """Wide card that shares the bound callbacks and checks of the staff controls."""
+
+    def __init__(self, embed, file, controls):
+        super().__init__(timeout=controls.timeout)
+        self.controls = controls
+        items = []
+        if file:
+            items.append(discord.ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{file.filename}")))
+        text = "\n".join(part for part in (
+            f"## {embed.title}" if embed.title else None,
+            embed.description,
+            f"-# {embed.footer.text}" if embed.footer.text else None,
+        ) if part)
+        if text:
+            items.append(discord.ui.TextDisplay(text))
+        rows = {}
+        for item in list(controls.children):
+            index = item.row if item.row is not None else 0
+            controls.remove_item(item)
+            rows.setdefault(index, discord.ui.ActionRow()).add_item(item)
+        items.extend(row for _, row in sorted(rows.items()))
+        self.add_item(discord.ui.Container(*items, accent_colour=embed.color))
+
+    async def interaction_check(self, inter: discord.Interaction) -> bool:
+        return await self.controls.interaction_check(inter)
+
+
+async def edit_staff_page(inter, embed, file, controls):
+    view = StaffLayout(embed, file, controls)
+    options = {"attachments": [file] if file else [], "view": view,
+               "allowed_mentions": discord.AllowedMentions.none()}
+    if inter.message and not inter.message.flags.components_v2:
+        options.update(content=None, embeds=[])
+    await inter.edit_original_response(**options)
+
+
 class StaffSection(discord.ui.Select):
     def __init__(self, owner_id, member, section):
         self.owner_id, self.member = owner_id, member
-        super().__init__(placeholder="Раздел Канцелярии", row=4, options=[
+        super().__init__(placeholder="Раздел Канцелярии", row=0, options=[
             discord.SelectOption(label="Профиль участника", value="profile", emoji=em("profile", "👤"),
                                  default=section == "profile"),
             discord.SelectOption(label="Модерация", value="moderation", emoji=em("adm_scales", "🛡️"),
@@ -278,8 +315,7 @@ class StaffView(discord.ui.View):
         if not inter.response.is_done():
             await inter.response.defer()
         e, f = await staff_page(inter.guild_id, self.member, inter.guild, note)
-        await inter.edit_original_response(embed=e, attachments=[f] if f else [],
-                                           view=StaffView(self.owner_id, self.member))
+        await edit_staff_page(inter, e, f, StaffView(self.owner_id, self.member))
 
     async def apply(self, inter: discord.Interaction, kind: str, n: int):
         g, m = inter.guild_id, self.member
@@ -314,7 +350,7 @@ class StaffView(discord.ui.View):
         log(inter, m, note)
         await self.show(inter, note)
 
-    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="Выбери участника", row=0)
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="Выбери участника", row=1)
     async def pick(self, inter: discord.Interaction, select: discord.ui.UserSelect):
         m = select.values[0]
         if not isinstance(m, discord.Member):
@@ -324,27 +360,27 @@ class StaffView(discord.ui.View):
         self.member = m
         await self.show(inter)
 
-    @discord.ui.button(label="Монеты ±", emoji="💰", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="Монеты ±", emoji="💰", style=discord.ButtonStyle.success, row=2)
     async def b_coins(self, inter, _):
         await inter.response.send_modal(NumModal(self, "coins_add", "Выдать или забрать монеты",
                                                  "Сколько монет", "500 — выдать, -500 — забрать"))
 
-    @discord.ui.button(label="Задать баланс", emoji="🏦", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Задать баланс", emoji="🏦", style=discord.ButtonStyle.secondary, row=2)
     async def b_set(self, inter, _):
         await inter.response.send_modal(NumModal(self, "coins_set", "Задать баланс",
                                                  "Новый баланс", "например 1000"))
 
-    @discord.ui.button(label="Уровень", emoji="⭐", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="Уровень", emoji="⭐", style=discord.ButtonStyle.primary, row=2)
     async def b_level(self, inter, _):
         await inter.response.send_modal(NumModal(self, "level_set", "Задать уровень",
                                                  "Какой уровень поставить", "от 1 до 200"))
 
-    @discord.ui.button(label="Опыт ±", emoji="✨", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="Опыт ±", emoji="✨", style=discord.ButtonStyle.primary, row=2)
     async def b_xp(self, inter, _):
         await inter.response.send_modal(NumModal(self, "xp_add", "Добавить или убрать опыт",
                                                  "Сколько опыта", "300 — добавить, -300 — убрать"))
 
-    @discord.ui.select(placeholder="Путь / кольца / сбросы", row=2, options=[
+    @discord.ui.select(placeholder="Путь, кольца и таймеры", row=3, options=[
         discord.SelectOption(label="Путь: Знать", value="path:noble", emoji="👑"),
         discord.SelectOption(label="Путь: Вера", value="path:faith", emoji="✝️"),
         discord.SelectOption(label="Убрать путь", value="path:none", emoji="➖"),
@@ -378,14 +414,15 @@ class StaffView(discord.ui.View):
         log(inter, m, note)
         await self.show(inter, note)
 
-    @discord.ui.button(label="Обновить", emoji="🔄", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Обновить", emoji="🔄", style=discord.ButtonStyle.secondary, row=4)
     async def b_refresh(self, inter, _):
         await self.show(inter)
 
-    @discord.ui.button(label="Обнулить участника", emoji="♻️", style=discord.ButtonStyle.danger, row=3)
+    @discord.ui.button(label="Обнулить участника", emoji="♻️", style=discord.ButtonStyle.danger, row=4)
     async def b_reset(self, inter, _):
-        await inter.response.edit_message(embed=discord.Embed(title="Сброс прогресса", description=RESET_SCOPE),
-                                          attachments=[], view=ConfirmReset(self))
+        await inter.response.defer()
+        e = discord.Embed(title="Сброс прогресса", description=RESET_SCOPE, color=discord.Color.dark_red())
+        await edit_staff_page(inter, e, None, ConfirmReset(self))
 
 
 class ConfirmReset(discord.ui.View):
@@ -437,8 +474,9 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
     if участник and участник.bot:
         участник = None
     e, f = await staff_page(inter.guild_id, участник, inter.guild)
+    view = StaffLayout(e, f, StaffView(inter.user.id, участник))
     kw = {"file": f} if f else {}
-    await inter.followup.send(embed=e, view=StaffView(inter.user.id, участник), ephemeral=True, **kw)
+    await inter.followup.send(view=view, ephemeral=True, **kw)
 
 
 # ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════

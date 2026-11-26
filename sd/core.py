@@ -564,6 +564,13 @@ class EconomyBot(commands.Bot):
             )
         """)
         await self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS moderation_events (
+                interaction_id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL,
+                duration_minutes INTEGER, created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS moderation_events_member
+                ON moderation_events(guild_id,user_id,interaction_id DESC);
             CREATE TABLE IF NOT EXISTS pending_love_rooms (
                 guild_id INTEGER NOT NULL, name TEXT NOT NULL, created INTEGER NOT NULL,
                 PRIMARY KEY(guild_id,name)
