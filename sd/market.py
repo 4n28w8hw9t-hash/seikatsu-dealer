@@ -265,6 +265,34 @@ async def my_roles(inter: discord.Interaction):
     await send_card(inter, e, "inv", rows=rows, allowed_mentions=discord.AllowedMentions.none())
 
 
+@bot.tree.command(name="инвентарь", description="Сколько у тебя ролей и колец")
+async def inventory(inter: discord.Interaction):
+    g, uid = inter.guild_id, inter.user.id
+    roles = [r for r in await owned_roles(g, uid)
+             if not await forget_missing(inter.guild, r)]
+    worn_roles = sum(bool(r["worn"]) for r in roles)
+    from .marriage import RINGS, get_marriage, get_rings, ring_emo
+    rings = await get_rings(g, uid)
+    mar = await get_marriage(g, uid)
+    active = mar["ring"] if mar else None
+    total_stock = sum(rings.values())
+    total_rings = total_stock + int(active in RINGS)
+    current_name = RINGS[active][0] if active in RINGS else "нет"
+    lines = []
+    for key, (name, _, _) in RINGS.items():
+        count = rings.get(key, 0)
+        suffix = f" · стоит в профиле пары" if key == active else ""
+        lines.append((f"ring_{key}", f"{name} · в запасе: {count}{suffix}"))
+    rows = [["roles", "rings", "couple"]]
+    await send_panel(
+        inter, "shop", f"Инвентарь · {inter.user.display_name}",
+        subtitle="Твои роли и кольца", icon="inv",
+        tiles=[("inv", "Роли", str(len(roles)), f"надето: {worn_roles}", False),
+               ("ring", "Всего колец", str(total_rings),
+                f"в запасе: {total_stock} · в профиле: {current_name}", False)],
+        lines=lines, rows=rows)
+
+
 async def show_mine(inter: discord.Interaction, ref: int):
     roles = {r["id"]: r for r in await owned_roles(inter.guild_id, inter.user.id)}
     r = roles.get(ref)
@@ -385,3 +413,4 @@ async def delete_role(guild: discord.Guild, ref: int) -> bool:
     await bot.db.execute("DELETE FROM custom_roles WHERE guild_id=? AND id=?", (guild.id, ref))
     await bot.db.commit()
     return True
+
