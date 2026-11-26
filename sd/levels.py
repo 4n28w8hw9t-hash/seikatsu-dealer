@@ -186,10 +186,15 @@ async def tick():
                                 "UPDATE users SET voice_min=voice_min+1 WHERE guild_id=? AND user_id=?",
                                 (guild.id, uid))
                             await record(db, guild.id, uid, "voice", now)
-        from .marriage import clean_rooms
-        await clean_rooms()
     except Exception as ex:
-        print("Ошибка в tick:", repr(ex))
+        print("Ошибка начисления опыта в войсе:", repr(ex))
+    from .market import recover_role_purchases
+    from .marriage import clean_retired_rooms, clean_rooms
+    for job in (clean_rooms, clean_retired_rooms, recover_role_purchases):
+        try:
+            await job()
+        except Exception as ex:
+            print("Ошибка фоновой задачи:", job.__name__, repr(ex))
 
 
 @tick.before_loop

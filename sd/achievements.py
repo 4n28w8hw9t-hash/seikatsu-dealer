@@ -62,9 +62,20 @@ async def unlock(guild_id: int, user_id: int) -> list[str]:
     new = [k for k, _, _, _, stat, need in ACHIEVEMENTS if k not in s["ach"] and s[stat] >= need]
     if not new:
         return []
-    reward = sum(RARITY[BY_KEY[k][3]][2] for k in new)
-    await bot.set_field(guild_id, user_id, ach=",".join(sorted(s["ach"] | set(new))))
-    await bot.add(guild_id, user_id, reward)
+    async with bot.transaction() as db:
+        async with db.execute("SELECT ach FROM users WHERE guild_id=? AND user_id=?",
+                              (guild_id, user_id)) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return []
+        unlocked = set(filter(None, (row[0] or "").split(",")))
+        new = [key for key in new if key not in unlocked]
+        if not new:
+            return []
+        reward = sum(RARITY[BY_KEY[key][3]][2] for key in new)
+        await db.execute(
+            "UPDATE users SET ach=?, balance=balance+? WHERE guild_id=? AND user_id=?",
+            (",".join(sorted(unlocked.union(new))), reward, guild_id, user_id))
     return new
 
 

@@ -427,13 +427,12 @@ def latest_anniversary(days):
     return max((milestone for milestone in ANNIVERSARIES if days >= milestone), default=None)
 
 
-async def anniversary(inter: discord.Interaction, *, celebrate=False):
+async def anniversary(inter: discord.Interaction, *, celebrate=False, milestone: int | None = None):
     g, uid = inter.guild_id, inter.user.id
     mar = await get_marriage(g, uid)
     if not mar:
         return await reply(inter, "Отметки за годовщины доступны участникам пары.", rows=[["couple"]])
     days = anniversary_days(mar)
-    latest = latest_anniversary(days)
     async with bot.db.execute(
         "SELECT days FROM anniversaries WHERE guild_id=? AND a=? AND b=? AND since=?",
         (g, mar["a"], mar["b"], mar["since"])
@@ -441,13 +440,15 @@ async def anniversary(inter: discord.Interaction, *, celebrate=False):
         published = {row[0] for row in await cur.fetchall()}
 
     note = ""
-    available = latest is not None and latest not in published
-    if celebrate and available:
+    available = [target for target in ANNIVERSARIES if days >= target and target not in published]
+    if celebrate and milestone is None and available:
+        milestone = available[-1]  # старая кнопка из уже отправленных сообщений
+    if celebrate and milestone in available:
         channel = bot_channel(inter.guild) or inter.channel
         names = [await member_name(inter.guild, uid) for uid in (mar["a"], mar["b"])]
         card = embed("🏅 Годовщина пары",
                      f"**{discord.utils.escape_markdown(names[0])} и {discord.utils.escape_markdown(names[1])}** "
-                     f"отмечают **{latest} дней вместе**. Двор поздравляет вас!")
+                     f"отмечают **{milestone} дней вместе**. Двор поздравляет вас!")
         try:
             await channel.send(embed=card, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
@@ -455,20 +456,30 @@ async def anniversary(inter: discord.Interaction, *, celebrate=False):
         else:
             await bot.db.execute(
                 "INSERT OR IGNORE INTO anniversaries(guild_id,a,b,since,days) VALUES(?,?,?,?,?)",
-                (g, mar["a"], mar["b"], mar["since"], latest))
+                (g, mar["a"], mar["b"], mar["since"], milestone))
             await bot.db.commit()
-            published.add(latest)
-            available = False
+            published.add(milestone)
+            available.remove(milestone)
             note = "Поздравление опубликовано в Казне."
     elif celebrate:
-        note = "Эту дату уже отпраздновали." if latest else "Первая отметка открывается через 7 дней."
+        if milestone in published:
+            note = "Эту дату уже отпраздновали."
+        elif milestone is not None or days < ANNIVERSARIES[0]:
+            note = "Эта дата ещё не открылась."
+        else:
+            note = "Все достигнутые даты уже отпраздновали."
 
     lines = [f"{'🏅' if days >= target else '◇'} **{target} дней** · "
              + ("отпраздновали" if target in published else "открыто" if days >= target
                 else f"осталось {target - days} дн.")
              for target in ANNIVERSARIES]
     text = "\n".join([f"Вы вместе **{days} дн.**", "", *lines, "", note]).strip()
-    rows = [["anniversary:celebrate", "couple"]] if available else [["couple"]]
+    rows = [["couple"]]
+    if available:
+        rows.insert(0, [discord.ui.Select(
+            custom_id="sd:anniversary:pick", placeholder="Какую годовщину отпраздновать?",
+            options=[discord.SelectOption(label=f"{target} дней вместе", value=str(target))
+                     for target in available])])
     await send_card(inter, embed("🏅 Годовщины пары", text), "marry", rows=rows)
 
 
@@ -635,15 +646,44 @@ async def divorce_confirm(inter: discord.Interaction):
                 rows=[["rings"]], key="marry")
 
 
-async def dissolve(guild: discord.Guild, mar: dict):
-    ch = guild.get_channel(mar["room_id"]) if mar.get("room_id") else None
-    if ch:
+async def delete_retired_room(guild: discord.Guild, room_id: int) -> bool:
+    try:
+        channel = guild.get_channel(room_id) or await guild.fetch_channel(room_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            print("Удаление лав-румы отменено: другой тип канала", guild.id, room_id)
+            return False
+        await channel.delete(reason="Лав-рума после развода")
+    except discord.NotFound:
+        pass
+    except discord.HTTPException:
+        return False
+    async with bot.transaction() as db:
+        await db.execute("DELETE FROM room_cleanup WHERE guild_id=? AND room_id=?", (guild.id, room_id))
+    room_empty_since.pop(room_id, None)
+    return True
+
+
+async def clean_retired_rooms():
+    async with bot.db.execute("SELECT guild_id,room_id FROM room_cleanup") as cur:
+        pending = await cur.fetchall()
+    for guild_id, room_id in pending:
+        guild = bot.get_guild(guild_id)
+        if guild is None or guild.unavailable:
+            continue
         try:
-            await ch.delete(reason="Развод")
-        except discord.HTTPException:
-            pass
-    room_empty_since.pop(mar["room_id"], None)
-    await bot.db.execute("DELETE FROM marriages WHERE guild_id=? AND a=?", (guild.id, mar["a"]))
-    await bot.db.commit()
+            await delete_retired_room(guild, room_id)
+        except Exception as ex:
+            print("Лав-рума ожидает удаления:", guild_id, room_id, repr(ex))
+
+
+async def dissolve(guild: discord.Guild, mar: dict):
+    room_id = mar["room_id"]
+    async with bot.transaction() as db:
+        if room_id:
+            await db.execute("INSERT OR IGNORE INTO room_cleanup(guild_id,room_id) VALUES(?,?)",
+                             (guild.id, room_id))
+        await db.execute("DELETE FROM marriages WHERE guild_id=? AND a=?", (guild.id, mar["a"]))
     await set_couple_role(guild.id, (mar["a"], mar["b"]), False)
+    if room_id and not await delete_retired_room(guild, room_id):
+        print("Лав-рума поставлена в очередь удаления:", guild.id, room_id)
 

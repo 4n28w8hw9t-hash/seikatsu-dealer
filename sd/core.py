@@ -536,6 +536,19 @@ class EconomyBot(commands.Bot):
                 PRIMARY KEY (guild_id, a, b, since, days)
             )
         """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS pending_role_purchases (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, role_ref INTEGER NOT NULL,
+                role_id INTEGER NOT NULL, price INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, user_id, role_ref)
+            )
+        """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS room_cleanup (
+                guild_id INTEGER NOT NULL, room_id INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, room_id)
+            )
+        """)
         # банка больше нет: всё, что лежало в нём, переходит на баланс
         await self.db.execute("UPDATE users SET balance=balance+bank, bank=0 WHERE bank>0")
         await self.db.commit()
