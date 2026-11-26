@@ -594,7 +594,8 @@ async def show_mine(inter: discord.Interaction, ref: int, state=None):
                                          custom_id=f"sd:mk:sell:{ref}{suffix}"))
         else:
             info.append(f"В магазине за **{fmt(r['price'])}**")
-            btn.append(discord.ui.Button(label="Изменить цену", emoji=icon_emoji("🏷️"),
+            price_icon = discord.PartialEmoji.from_str(button_icon("role_price_change") or "🏷️")
+            btn.append(discord.ui.Button(label="Изменить цену", emoji=price_icon,
                                          style=discord.ButtonStyle.primary,
                                          custom_id=f"sd:mk:sell:{ref}{suffix}"))
             btn.append(discord.ui.Button(label="Снять с продажи", emoji=icon_emoji("✖️"),

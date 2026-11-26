@@ -140,12 +140,12 @@ BUTTONS = {
     "inventory": ("Инвентарь", "🎒", "inventory_chest", _B),
     "history": ("История", "📒", "history", _B),
     "pairquest": ("Поручение пары", "📜", "pair_quest", _B),
-    "pairquest:claim": ("Забрать опыт", "🎁", "gift", _OK),
+    "pairquest:claim": ("Забрать опыт", "🎁", "pair_xp_claim", _OK),
     "top:season": ("За месяц", "🏅", "season_top", _B),
     "showcase": ("Витрина", "🏅", "showcase", _B),
     "inv:rings": ("Кольца", "💍", "ring", _B),
     "quests": ("Поручения", "📜", "quest_book", _B),
-    "quests:claim": ("Забрать награду", "🎁", "gift", _OK),
+    "quests:claim": ("Забрать награду", "🎁", "quest_reward_claim", _OK),
     "anniversary": ("Годовщина", "🏅", "anniversary", _B),
     "anniversary:celebrate": ("Отпраздновать", "🎉", "win", _OK),
     "rolecreate": ("Создать роль", "✨", "role_create", _OK),
@@ -210,6 +210,7 @@ BUTTON_ICON_FALLBACKS = {
     "pair_quest": "quest_book", "season_top": "top_lvl", "showcase": "top",
     "ring_collection": "ring", "ring_gift": "gift",
     "anniversary": "top", "role_create": "skill",
+    "pair_xp_claim": "gift", "quest_reward_claim": "gift", "role_price_change": "tag",
 }
 
 
