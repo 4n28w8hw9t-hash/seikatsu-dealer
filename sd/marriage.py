@@ -78,16 +78,21 @@ def ring_action_select(owned: dict[str, int], current: str | None) -> discord.ui
             label=f"Купить: {name}", value=f"buy:{key}",
             description=f"{price:,} монет".replace(",", " "), emoji=emoji))
     for key, (name, _, _) in RINGS.items():
-        if owned.get(key, 0) > 0:
+        if owned.get(key, 0) > 0 and key != current:
             emoji = discord.PartialEmoji.from_str(ring_emo(key))
             options.append(discord.SelectOption(
-                label=f"Подарить: {name}", value=f"gift:{key}",
-                description="Передать кольцо супругу или супруге", emoji=emoji))
-            if key != current:
-                options.append(discord.SelectOption(
-                    label=f"Надеть: {name}", value=f"wear:{key}",
-                    description="Показывать это кольцо в профиле пары", emoji=emoji))
-    return discord.ui.Select(custom_id="sd:ringbook:action", placeholder="Выбери действие с кольцом",
+                label=f"Выбрать в профиле: {name}", value=f"wear:{key}",
+                description="Показывать это кольцо в профиле пары", emoji=emoji))
+    return discord.ui.Select(custom_id="sd:ringbook:action", placeholder="Купить или выбрать кольцо",
+                             min_values=1, max_values=1, options=options)
+
+
+def gift_ring_select(owned: dict[str, int]) -> discord.ui.Select:
+    options = [discord.SelectOption(
+        label=f"Подарить: {RINGS[key][0]}", value=f"gift:{key}",
+        description=f"Есть в коллекции: {qty}", emoji=discord.PartialEmoji.from_str(ring_emo(key)))
+        for key, qty in owned.items() if key in RINGS and qty > 0]
+    return discord.ui.Select(custom_id="sd:ringbook:giftselect", placeholder="Какое кольцо подарить?",
                              min_values=1, max_values=1, options=options)
 
 
@@ -107,7 +112,7 @@ async def show_ring_collection(inter: discord.Interaction, mar: dict | None = No
     try:
         png = await asyncio.to_thread(art.ring_collection_card, banner, card)
         return await reply(inter, note, image=("rings.png", png),
-                           rows=[[ring_action_select(owned, current)], ["couple", "rings"]],
+                           rows=[[ring_action_select(owned, current)], ["ringgift", "couple", "rings"]],
                            key=None)
     except Exception as ex:
         print("Коллекция колец не нарисована:", repr(ex))
@@ -116,7 +121,19 @@ async def show_ring_collection(inter: discord.Interaction, mar: dict | None = No
              for r in card]
     e = embed("Коллекция колец", (note + "\n\n" if note else "") + "\n".join(lines))
     return await reply(inter, embed=e,
-                       rows=[[ring_action_select(owned, current)], ["couple", "rings"]], key=None)
+                       rows=[[ring_action_select(owned, current)], ["ringgift", "couple", "rings"]], key=None)
+
+
+async def choose_gift_ring(inter: discord.Interaction):
+    mar = await get_marriage(inter.guild_id, inter.user.id)
+    if not mar:
+        return await reply(inter, "Подарить кольцо можно только своему супругу или супруге",
+                           rows=[["couple"]], key=None)
+    owned = await get_rings(inter.guild_id, inter.user.id)
+    if not any(qty > 0 for qty in owned.values()):
+        return await reply(inter, "У тебя нет свободных колец для подарка. Сначала купи кольцо в коллекции.",
+                           rows=[["ringbook", "rings"]], key=None)
+    return await reply(inter, "Выбери кольцо для подарка:", rows=[[gift_ring_select(owned)]], key=None)
 
 
 async def ring_action(inter: discord.Interaction, action: str):
