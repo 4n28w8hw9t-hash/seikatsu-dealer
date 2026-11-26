@@ -134,6 +134,7 @@ BUTTONS = {
     "ring:ruby": ("С рубином · 5000", "❤️", "ring_ruby", _OK),
     "market": ("Магазин ролей", "🛒", "shop", _G),
     "roles": ("Мои роли", "🎭", "inv", _B),
+    "inventory": ("Инвентарь", "🎒", "inv", _B),
     "rolecreate": ("Создать роль", "✨", "skill", _OK),
     "help": ("Помощь", "❓", "help", _G),
     "roomname": ("Название румы", "🏷️", "tag", _G),
