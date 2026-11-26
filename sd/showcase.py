@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 
 from .achievements import ACHIEVEMENTS, BY_KEY
-from .core import E, bot, button_icon, embed, reply
+from .core import E, bot, button_icon, embed, send_card
 
 SEASON_LABELS = ("Золото сезона", "Серебро сезона", "Бронза сезона")
 BADGE_LIMIT = 3
@@ -110,7 +110,7 @@ async def show(inter: discord.Interaction, notice=""):
         clear_icon = discord.PartialEmoji.from_str(button_icon("cancel") or "✖️")
         rows.append([discord.ui.Button(label="Очистить витрину", emoji=clear_icon, custom_id="sd:showcase:clear")])
     icon = button_icon("showcase") or "🏅"
-    await reply(inter, embed=embed(f"{icon} Витрина профиля", "\n".join(lines)), rows=rows, key=None)
+    await send_card(inter, embed(f"{icon} Витрина профиля", "\n".join(lines)), "showcase", rows=rows)
 
 
 @bot.tree.command(name="витрина", description="Выбрать значки для своего профиля")
