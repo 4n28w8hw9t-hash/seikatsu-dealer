@@ -487,8 +487,11 @@ def ring_collection_card(banner_path, rings: list[dict], W: int = 1000, H: int =
         name, f = _pfit(d, ring["name"], "text", 25, cw - 20, 14)
         _t(d, (x + (cw - _tl(d, name, f)) / 2, y0 + 118), name, f,
            P_CREAM if ring["owned"] else P_MUTED)
-        if ring["current"]:
-            status = "НАДЕТО В ПРОФИЛЕ"
+        if ring["current"] and ring["qty"]:
+            status = f"В ПРОФИЛЕ · ЕСТЬ: {ring['qty']}"
+            fill = P_GOLD
+        elif ring["current"]:
+            status = "В ПРОФИЛЕ · НЕ В ЗАПАСЕ"
             fill = P_GOLD
         elif ring["owned"]:
             status = f"ЕСТЬ: {ring['qty']}"
