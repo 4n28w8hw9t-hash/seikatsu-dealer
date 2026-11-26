@@ -70,6 +70,97 @@ async def get_rings(guild_id: int, user_id: int) -> dict[str, int]:
     return {k: q for k, q in await cur.fetchall()}
 
 
+def ring_action_select(owned: dict[str, int], current: str | None) -> discord.ui.Select:
+    options = []
+    for key, (name, price, _) in RINGS.items():
+        emoji = discord.PartialEmoji.from_str(ring_emo(key))
+        options.append(discord.SelectOption(
+            label=f"Купить: {name}", value=f"buy:{key}",
+            description=f"{fmt(price)} монет", emoji=emoji))
+    for key, (name, _, _) in RINGS.items():
+        if owned.get(key, 0) > 0:
+            emoji = discord.PartialEmoji.from_str(ring_emo(key))
+            options.append(discord.SelectOption(
+                label=f"Подарить: {name}", value=f"gift:{key}",
+                description="Передать кольцо супругу или супруге", emoji=emoji))
+            if key != current:
+                options.append(discord.SelectOption(
+                    label=f"Надеть: {name}", value=f"wear:{key}",
+                    description="Показывать это кольцо в профиле пары", emoji=emoji))
+    return discord.ui.Select(custom_id="sd:ringbook:action", placeholder="Выбери действие с кольцом",
+                             min_values=1, max_values=1, options=options)
+
+
+async def show_ring_collection(inter: discord.Interaction, mar: dict | None = None,
+                               note: str | None = None):
+    mar = mar or await get_marriage(inter.guild_id, inter.user.id)
+    if not mar:
+        return await reply(inter, "Коллекция доступна участникам пары", rows=[["rings"]])
+    owned = await get_rings(inter.guild_id, inter.user.id)
+    current = mar["ring"]
+    card = [{"key": key, "name": name, "price": price,
+             "qty": owned.get(key, 0),
+             "owned": owned.get(key, 0) > 0 or key == current,
+             "current": key == current}
+            for key, (name, price, _) in RINGS.items()]
+    banner = getattr(bot, "banners", {}).get("marry") or getattr(bot, "banners", {}).get("help")
+    try:
+        png = await asyncio.to_thread(art.ring_collection_card, banner, card)
+        return await reply(inter, note, image=("rings.png", png),
+                           rows=[[ring_action_select(owned, current)], ["couple", "rings"]],
+                           key=None)
+    except Exception as ex:
+        print("Коллекция колец не нарисована:", repr(ex))
+    lines = [f"{ring_emo(r['key'])} **{r['name']}** — "
+             + ("надето" if r["current"] else f"есть: {r['qty']}" if r["owned"] else "нет")
+             for r in card]
+    e = embed("Коллекция колец", (note + "\n\n" if note else "") + "\n".join(lines))
+    return await reply(inter, embed=e,
+                       rows=[[ring_action_select(owned, current)], ["couple", "rings"]], key=None)
+
+
+async def ring_action(inter: discord.Interaction, action: str):
+    verb, _, key = action.partition(":")
+    if verb not in {"buy", "gift", "wear"} or key not in RINGS:
+        return await reply(inter, "Не удалось определить действие с кольцом", key=None)
+    g, uid = inter.guild_id, inter.user.id
+    mar = await get_marriage(g, uid)
+    if not mar:
+        return await reply(inter, "Действия с коллекцией доступны только участникам пары",
+                           rows=[["rings"]], key=None)
+    name, price, _ = RINGS[key]
+    owned = await get_rings(g, uid)
+    if verb == "buy":
+        user = await bot.get_user(g, uid)
+        if user["balance"] < price:
+            return await show_ring_collection(
+                inter, mar, f"Не хватает {fmt(price - user['balance'])} монет на {name}.")
+        await bot.add(g, uid, -price)
+        await bot.db.execute(
+            "INSERT INTO rings(guild_id,user_id,ring,qty) VALUES(?,?,?,1) "
+            "ON CONFLICT(guild_id,user_id,ring) DO UPDATE SET qty=qty+1", (g, uid, key))
+        await bot.db.commit()
+        return await show_ring_collection(inter, mar, f"{ring_emo(key)} Куплено: **{name}**.")
+    if verb == "gift":
+        if owned.get(key, 0) <= 0:
+            return await show_ring_collection(inter, mar, f"У тебя нет кольца «{name}», чтобы подарить его.")
+        recipient = other_of(mar, uid)
+        await bot.db.execute("UPDATE rings SET qty=qty-1 WHERE guild_id=? AND user_id=? AND ring=? AND qty>0",
+                             (g, uid, key))
+        await bot.db.execute(
+            "INSERT INTO rings(guild_id,user_id,ring,qty) VALUES(?,?,?,1) "
+            "ON CONFLICT(guild_id,user_id,ring) DO UPDATE SET qty=qty+1", (g, recipient, key))
+        await bot.db.commit()
+        target = await member_name(inter.guild, recipient)
+        return await show_ring_collection(inter, mar, f"{ring_emo(key)} Ты подарил(а) кольцо «{name}» участнику **{target}**.")
+    if owned.get(key, 0) <= 0 and mar["ring"] != key:
+        return await show_ring_collection(inter, mar, f"У тебя нет кольца «{name}», чтобы выбрать его.")
+    await bot.db.execute("UPDATE marriages SET ring=? WHERE guild_id=? AND a=?", (key, g, mar["a"]))
+    await bot.db.commit()
+    mar["ring"] = key
+    return await show_ring_collection(inter, mar, f"{ring_emo(key)} В профиле пары теперь отображается **{name}**.")
+
+
 def best_ring(owned: dict[str, int]) -> str | None:
     keys = [k for k in RINGS if owned.get(k)]
     return max(keys, key=lambda k: RINGS[k][1]) if keys else None
@@ -234,7 +325,7 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
                       ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
     mine = inter.user.id in (mar["a"], mar["b"])
-    rows = [["loveroom", "roomname", "divorce"]] if mine else []
+    rows = [["ringbook"], ["loveroom", "roomname", "divorce"]] if mine else []
     banners = getattr(bot, "banners", {})
     try:
         png = await asyncio.to_thread(
@@ -385,3 +476,4 @@ async def dissolve(guild: discord.Guild, mar: dict):
     await bot.db.execute("DELETE FROM marriages WHERE guild_id=? AND a=?", (guild.id, mar["a"]))
     await bot.db.commit()
     await set_couple_role(guild.id, (mar["a"], mar["b"]), False)
+
