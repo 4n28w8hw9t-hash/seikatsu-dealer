@@ -23,7 +23,7 @@ def ring_emo(key: str) -> str:
 
 
 RING_SHORT = {"silver": "Серебро", "gold": "Золото", "ruby": "Рубин"}
-ROOM_CATEGORY = "💞 Лав-румы"
+ROOM_CATEGORY_ID = 1575480244687609926
 ROOM_EMPTY_GRACE = 120   # пустая рума удаляется через 2 минуты
 ROOM_RENAME_PRICE = 1000  # своё название лав-румы
 ROOM_NAME_MAX = 40
@@ -259,8 +259,14 @@ async def love_room(inter: discord.Interaction):
         return await reply(inter, f"💞 Ваша лав-рума уже открыта: {ch.mention}", rows=[["couple"]])
     me = g.me
     try:
-        cat = discord.utils.get(g.categories, name=ROOM_CATEGORY) or \
-            await g.create_category(ROOM_CATEGORY, reason="Лав-румы для пар")
+        cat = g.get_channel(ROOM_CATEGORY_ID)
+        if not isinstance(cat, discord.CategoryChannel):
+            return await reply(
+                inter,
+                f"Не нашёл категорию лав-рум по ID `{ROOM_CATEGORY_ID}`. "
+                "Проверь, что категория есть на этом сервере и бот её видит.",
+                rows=[["couple"]],
+            )
         lovers = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True,
                                              stream=True, use_voice_activation=True)
         # руму видят все (и кто в ней сидит), но зайти могут только двое
