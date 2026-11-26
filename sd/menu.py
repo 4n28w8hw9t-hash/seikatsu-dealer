@@ -181,6 +181,10 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await couple.callback(inter, None)
     elif key == "rings":
         await rings_shop.callback(inter)
+    elif key == "ringbook":
+        await marriage.show_ring_collection(inter)
+    elif key == "ringbook:action":
+        await marriage.ring_action(inter, side)
     elif key.startswith("ring:"):
         await buy_ring(inter, key[5:])
     elif key == "loveroom":
@@ -276,6 +280,10 @@ async def on_interaction(inter: discord.Interaction):
     if key == "sections":   # выбор в списке «Все разделы»
         vals = (inter.data or {}).get("values") or [""]
         key = str(vals[0])
+    side = ""
+    if key == "ringbook:action":
+        vals = (inter.data or {}).get("values") or [""]
+        side = str(vals[0])
     if key not in BUTTONS and not key.startswith("mk:"):
         return
     try:
@@ -293,7 +301,7 @@ async def on_interaction(inter: discord.Interaction):
             return await inter.response.send_modal(modal)
     except discord.HTTPException as ex:
         return print("Ошибка кнопки:", key, repr(ex))
-    await run_action(inter, key)
+    await run_action(inter, key, side=side)
 
 
 def menu_page() -> dict:
@@ -316,3 +324,4 @@ def menu_page() -> dict:
 @bot.tree.command(name="меню", description="Все действия кнопками")
 async def menu(inter: discord.Interaction):
     await dashboard(inter)
+
