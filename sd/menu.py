@@ -11,7 +11,7 @@ from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
 from .levels import PATHS, RANK_STEP, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, work_pay, xp_for
-from . import market, marriage, top
+from . import market, marriage, quests, top
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
 
@@ -69,6 +69,7 @@ MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"
 SECTIONS = [
     ("profile", "Профиль", "Твой уровень, титул и место в топе"),
     ("inventory", "Инвентарь", "Твои роли и кольца"),
+    ("quests", "Поручения двора", "Еженедельные задания и награда"),
     ("path", "Путь и титул", "Знать или Вера, следующее звание"),
     ("top", "Топ двора", "Лучшие по уровню и по монетам"),
     ("ach", "Достижения", "Награды за успехи"),
@@ -154,7 +155,7 @@ async def dashboard(inter: discord.Interaction):
                  _OK if (path and w_left <= 0) else _G),
              btn("profile"), btn("inventory"), btn("balance")]
     await send_panel(inter, "menu", f"Покои · {m.display_name}", subtitle=sub, icon="profile",
-                     bar=bar, tiles=tiles, lines=lines, rows=[quick, [sections_select()]], nav=False)
+                     bar=bar, tiles=tiles, lines=lines, rows=[quick, ["quests"], [sections_select()]], nav=False)
 
 
 async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
@@ -182,6 +183,14 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await help_cmd.callback(inter)
     elif key == "couple":
         await couple.callback(inter, None)
+    elif key == "anniversary":
+        await marriage.anniversary(inter)
+    elif key == "anniversary:celebrate":
+        await marriage.anniversary(inter, celebrate=True)
+    elif key == "quests":
+        await quests.show(inter)
+    elif key == "quests:claim":
+        await quests.claim(inter)
     elif key == "rings":
         await rings_shop.callback(inter)
     elif key == "ringbook":
@@ -206,6 +215,14 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await market.my_roles.callback(inter)
     elif key == "inventory":
         await market.inventory.callback(inter)
+    elif key == "inv:rings":
+        await market.inventory_rings(inter)
+    elif key == "inv:filter":
+        await market.inventory_roles(inter, side)
+    elif key.startswith("inv:roles:"):
+        _, _, filter_key, page = key.split(":", 3)
+        if page.isdecimal() and len(page) <= 9:
+            await market.inventory_roles(inter, filter_key, int(page))
     elif key.startswith("mk:"):
         await market.handle(inter, key)
     elif key == "coin":
@@ -290,10 +307,10 @@ async def on_interaction(inter: discord.Interaction):
         vals = (inter.data or {}).get("values") or [""]
         key = str(vals[0])
     side = ""
-    if key in ("ringbook:action", "ringbook:giftselect"):
+    if key in ("ringbook:action", "ringbook:giftselect", "inv:filter"):
         vals = (inter.data or {}).get("values") or [""]
         side = str(vals[0])
-    if key not in BUTTONS and not key.startswith("mk:"):
+    if key not in BUTTONS and key != "inv:filter" and not key.startswith(("mk:", "inv:roles:")):
         return
     try:
         if await wrong_channel(inter):
@@ -321,7 +338,7 @@ def menu_page() -> dict:
                      "-# Командами остались действия с другим игроком: "
                      "`/перевод`, `/дуэль` и `/брак`."),
         color=RED)
-    rows = [["menu", "daily", "work"], ["profile", "inventory", "balance"], [sections_select()]]
+    rows = [["menu", "daily", "work"], ["profile", "inventory", "quests", "balance"], [sections_select()]]
     kw = {"embed": e, "rows": rows, "nav": False}
     b = getattr(bot, "banners", {})
     path = b.get("menu") or b.get("help")

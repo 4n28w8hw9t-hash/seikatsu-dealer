@@ -5,7 +5,7 @@ import time
 import discord
 from discord import app_commands
 
-from .core import bot, icon_emoji, embed, fmt, member_name, reply, send_card
+from .core import _B, _G, bot, btn, icon_emoji, embed, fmt, member_name, reply, send_card
 
 ROLE_CREATE_PRICE = 10_000   # создание роли
 ROLE_LIMIT = 3               # сколько ролей может создать один человек
@@ -265,45 +265,87 @@ async def my_roles(inter: discord.Interaction):
     await send_card(inter, e, "inv", rows=rows, allowed_mentions=discord.AllowedMentions.none())
 
 
+ROLE_FILTERS = {"all": "Все роли", "worn": "Надеты", "mine": "Мои", "bought": "Куплены"}
+ROLE_PAGE_SIZE = 8
+
+
+def inventory_page_button(filter_key, page, label, *, disabled):
+    return discord.ui.Button(label=label, custom_id=f"sd:inv:roles:{filter_key}:{page}",
+                             style=_G, disabled=disabled)
+
+
 @bot.tree.command(name="инвентарь", description="Твои роли и кольца")
 async def inventory(inter: discord.Interaction):
+    await inventory_roles(inter)
+
+
+async def inventory_roles(inter: discord.Interaction, filter_key="all", page=0):
     g, uid = inter.guild_id, inter.user.id
-    roles = [r for r in await owned_roles(g, uid)
-             if not await forget_missing(inter.guild, r)]
+    roles = [r for r in await owned_roles(g, uid) if not await forget_missing(inter.guild, r)]
     worn_roles = sum(bool(r["worn"]) for r in roles)
-    mine = [r for r in roles if r["owner_id"] == uid]
-    from .marriage import RINGS, get_marriage, get_rings
-    rings = await get_rings(g, uid)
-    mar = await get_marriage(g, uid)
-    active = mar["ring"] if mar else None
-    total_stock = sum(rings.values())
-    total_rings = total_stock + int(active in RINGS)
-    current_name = RINGS[active][0] if active in RINGS else "нет"
+    created = sum(r["owner_id"] == uid for r in roles)
+    if filter_key == "worn":
+        filtered = [r for r in roles if r["worn"]]
+    elif filter_key == "mine":
+        filtered = [r for r in roles if r["owner_id"] == uid]
+    elif filter_key == "bought":
+        filtered = [r for r in roles if r["owner_id"] != uid]
+    else:
+        filter_key, filtered = "all", roles
+    total_pages = max(1, (len(filtered) + ROLE_PAGE_SIZE - 1) // ROLE_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    visible = filtered[page * ROLE_PAGE_SIZE:(page + 1) * ROLE_PAGE_SIZE]
 
     lines = []
-    for r in roles:
-        tags = []
+    for r in visible:
+        tags = ["твоя" if r["owner_id"] == uid else "куплена", "надета" if r["worn"] else "снята"]
         if r["owner_id"] == uid:
-            tags.append("твоя")
             tags.append(f"в продаже за {r['price']}" if r["price"] is not None else "не продаётся")
             tags.append(f"продаж: {r['sold']}, заработано: {r['earned']}")
-        tags.append("надета" if r["worn"] else "снята")
         lines.append(f"<@&{r['role_id']}> — " + " · ".join(tags))
 
-    role_text = "\n".join(lines) if lines else "У тебя пока нет ролей."
-    description = (role_text + f"\n\n**Надето:** {worn_roles} · **Создано:** {len(mine)}/{ROLE_LIMIT}\n"
-                   f"**Всего колец:** {total_rings} · в запасе: {total_stock} · в профиле: {current_name}")
-    e = embed(f"{icon_emoji('🎒')} Мои роли", description)
-    rows = []
-    if roles:
+    role_text = "\n".join(lines) if lines else "В этой вкладке пока нет ролей."
+    desc = (f"**Всего ролей:** {len(roles)} · **Надето:** {worn_roles} · **Создано:** {created}/{ROLE_LIMIT}"
+            f"\n\n{role_text}\n\n-# Страница {page + 1} из {total_pages}")
+    filters = discord.ui.Select(
+        custom_id="sd:inv:filter", placeholder="Показать роли",
+        options=[discord.SelectOption(label=label, value=key, default=key == filter_key)
+                 for key, label in ROLE_FILTERS.items()])
+    rows = [[btn("inventory", "Роли"), btn("inv:rings", style=_G)], [filters]]
+    if visible:
         rows.append([discord.ui.Select(
             custom_id="sd:mk:mine", placeholder="Выбери роль",
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
                                           emoji=icon_emoji("⭐") if r["owner_id"] == uid else None)
-                     for r in roles[:25]])])
-    rows.append(["rolecreate", "market"])
-    await send_card(inter, e, "inv", rows=rows,
+                     for r in visible])])
+    actions = []
+    if total_pages > 1:
+        actions = [inventory_page_button(filter_key, max(page - 1, 0), "◀", disabled=page == 0),
+                   inventory_page_button(filter_key, page + 1, "▶", disabled=page + 1 == total_pages)]
+    rows.append(actions + ["rolecreate", "market"])
+    await send_card(inter, embed("🎒 Инвентарь · Роли", desc), "inv", rows=rows,
                     allowed_mentions=discord.AllowedMentions.none())
+
+
+async def inventory_rings(inter: discord.Interaction):
+    from .marriage import RINGS, collection_keys, get_marriage, get_rings, other_of, ring_emo
+
+    g, uid = inter.guild_id, inter.user.id
+    stock = await get_rings(g, uid)
+    mar = await get_marriage(g, uid)
+    active_name = RINGS[mar["ring"]][0] if mar and mar["ring"] in RINGS else "—"
+    lines = [f"{ring_emo(key)} **{name}** · {stock.get(key, 0)}"
+             for key, (name, _, _) in RINGS.items()]
+    text = f"**Личный запас:** {sum(stock.get(key, 0) for key in RINGS)}\n" + "\n".join(lines)
+    rows = [[btn("inventory", "Роли", style=_G), btn("inv:rings")]]
+    if mar:
+        partner_stock = await get_rings(g, other_of(mar, uid))
+        shared = collection_keys(mar, stock, partner_stock)
+        text += f"\n\n**Коллекция пары:** {len(shared)}/{len(RINGS)} · **В профиле:** {active_name}"
+        rows.append(["ringbook", "rings"])
+    else:
+        rows.append(["rings"])
+    await send_card(inter, embed("🎒 Инвентарь · Кольца", text), "shop", rows=rows)
 
 
 async def show_mine(inter: discord.Interaction, ref: int):
@@ -333,7 +375,7 @@ async def show_mine(inter: discord.Interaction, ref: int):
                                          style=discord.ButtonStyle.danger,
                                          custom_id=f"sd:mk:unsell:{ref}"))
     e = embed(f"🎭 {r['name']}" + (" ⭐" if own else ""), "\n".join(info), discord.Colour(r["color"]))
-    await send_card(inter, e, "inv", rows=[btn + ["roles"]])
+    await send_card(inter, e, "inv", rows=[btn + ["roles", "inventory"]])
 
 
 async def wear(inter: discord.Interaction, ref: int, on: bool):

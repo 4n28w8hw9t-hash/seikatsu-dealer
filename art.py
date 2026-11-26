@@ -446,6 +446,13 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
     y = _bar(d, tx, 236, right, data["have"], max(1, data["need"]),
              f"Опыт пары {data['have']:,} / {data['need']:,}".replace(",", " "))
     _cells(img, d, data["cells"][:3], tx, y + 24, right, cols=3, h=80)
+    if data.get("anniversary"):
+        label = f"Годовщина · {data['anniversary']} дней вместе"
+        label, font = _pfit(d, label, "sc6", 24, right - tx - 42)
+        badge = _icon("top", 30)
+        if badge:
+            img.paste(badge, (tx, y + 117), badge)
+        _t(d, (tx + 42, y + 120), label, font, P_GOLD)
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")

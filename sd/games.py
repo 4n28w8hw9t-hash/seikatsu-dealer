@@ -5,7 +5,7 @@ import random
 import discord
 from discord import app_commands
 
-from .core import bot, card_name, embed, fmt, reply, send_card, send_public
+from .core import ECON_LOCK, bot, card_name, embed, fmt, reply, send_card, send_public
 
 
 # ═════════ Монетка ═════════
@@ -61,25 +61,26 @@ class DuelView(discord.ui.View):
             return await self._deny(inter, "Это не твоя дуэль")
         if inter.user.bot:
             return
-        if getattr(self, "done", False):  # защита от двойного нажатия
-            return await self._deny(inter, "Вызов уже принят")
-        if self.open:
-            u = await bot.get_user(inter.guild_id, inter.user.id)
-            if u["balance"] < self.bet:
-                return await self._deny(inter, f"Нужно **{fmt(self.bet)}**, у тебя **{fmt(u['balance'])}**")
-            self.b = inter.user
-        self.done = True
-        self.stop()
-        g = inter.guild_id
-        ua, ub = await bot.get_user(g, self.a.id), await bot.get_user(g, self.b.id)
-        if ua["balance"] < self.bet or ub["balance"] < self.bet:
-            return await inter.response.edit_message(view=None, embed=self.card(
+        await inter.response.defer()
+        async with ECON_LOCK:
+            if getattr(self, "done", False) or self.is_finished():
+                return await inter.followup.send("Вызов уже закрыт", ephemeral=True)
+            g = inter.guild_id
+            challenger = await bot.get_user(g, self.a.id)
+            opponent = await bot.get_user(g, inter.user.id)
+            if self.open and challenger["balance"] >= self.bet and opponent["balance"] < self.bet:
+                return await inter.followup.send(
+                    f"Нужно **{fmt(self.bet)}**, у тебя **{fmt(opponent['balance'])}**", ephemeral=True)
+            if getattr(self, "done", False) or self.is_finished():
+                return await inter.followup.send("Вызов уже закрыт", ephemeral=True)
+            win, lose = random.sample([self.a, inter.user], 2)
+            self.done = True
+            self.stop()
+            settled = await bot.move_coins(g, lose.id, win.id, self.bet, duel=True)
+        if not settled:
+            return await inter.edit_original_response(view=None, embed=self.card(
                 "Дуэль отменена: у кого-то не хватает монет в кошельке.",
                 discord.Color.dark_grey()))
-        win, lose = random.sample([self.a, self.b], 2)
-        await bot.add(g, lose.id, -self.bet)
-        await bot.add(g, win.id, self.bet)
-        await bot.add(g, win.id, 1, "duel_wins")
         e = self.card(f"🎉 {win.mention} побеждает и забирает **{fmt(self.bet * 2)}**!",
                       discord.Color.green())
         e2 = embed("⚔️ Дуэль", f"😢 {lose.mention} проигрывает **{fmt(self.bet)}**", discord.Color.red())
@@ -93,7 +94,7 @@ class DuelView(discord.ui.View):
                 files.append(discord.File(path, filename=name))
             elif key == "win":
                 em.set_image(url=None)
-        await inter.response.edit_message(view=None, embeds=[e, e2], attachments=files)
+        await inter.edit_original_response(view=None, embeds=[e, e2], attachments=files)
         if self.bet >= 1000:   # крупные дуэли — в летопись
             from .chronicle import clog
             clog(inter.guild, "Дуэль", f"Дуэль на {self.bet * 2} монет",
@@ -117,7 +118,7 @@ class DuelView(discord.ui.View):
         await inter.response.edit_message(view=None, embed=self.card(text, discord.Color.dark_grey()))
 
     async def on_timeout(self):
-        if self.message:
+        if self.message and not getattr(self, "done", False):
             try:
                 text = (f"Никто не принял вызов {self.a.mention}." if self.open
                         else f"{self.b.mention} не ответил на вызов {self.a.mention}.")

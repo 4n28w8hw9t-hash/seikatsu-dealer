@@ -2,6 +2,7 @@
 import aiosqlite
 import art
 import asyncio
+from contextlib import asynccontextmanager
 import discord
 from . import smallcaps  # noqa: F401,E402  — Small Caps для текста бота
 import io
@@ -135,6 +136,11 @@ BUTTONS = {
     "market": ("Магазин ролей", "🛒", "shop", _G),
     "roles": ("Мои роли", "🎭", "inv", _B),
     "inventory": ("Инвентарь", "🎒", "inventory_chest", _B),
+    "inv:rings": ("Кольца", "💍", "ring", _B),
+    "quests": ("Поручения", "📜", "help", _B),
+    "quests:claim": ("Забрать награду", "🎁", "gift", _OK),
+    "anniversary": ("Годовщина", "🏅", "top", _B),
+    "anniversary:celebrate": ("Отпраздновать", "🎉", "win", _OK),
     "rolecreate": ("Создать роль", "✨", "skill", _OK),
     "help": ("Помощь", "❓", "help", _G),
     "roomname": ("Название румы", "🏷️", "tag", _G),
@@ -494,6 +500,34 @@ class EconomyBot(commands.Bot):
             await self.db.execute("ALTER TABLE marriages ADD COLUMN room_name TEXT")
         except Exception:
             pass  # колонка уже есть
+        async with self.db.execute("PRAGMA table_info(marriages)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        if "bond_ring" not in columns:
+            await self.db.execute("BEGIN IMMEDIATE")
+            await self.db.execute("ALTER TABLE marriages ADD COLUMN bond_ring TEXT")
+            await self.db.execute("""
+                UPDATE marriages SET bond_ring=ring
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM rings
+                    WHERE rings.guild_id=marriages.guild_id AND rings.user_id IN (marriages.a, marriages.b)
+                      AND rings.ring=marriages.ring AND rings.qty>0
+                )
+            """)
+            await self.db.commit()
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_quests (
+                guild_id INTEGER, user_id INTEGER, week TEXT,
+                work INTEGER NOT NULL DEFAULT 0, voice INTEGER NOT NULL DEFAULT 0,
+                daily INTEGER NOT NULL DEFAULT 0, claimed INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, week)
+            )
+        """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS anniversaries (
+                guild_id INTEGER, a INTEGER, b INTEGER, since INTEGER, days INTEGER,
+                PRIMARY KEY (guild_id, a, b, since, days)
+            )
+        """)
         # банка больше нет: всё, что лежало в нём, переходит на баланс
         await self.db.execute("UPDATE users SET balance=balance+bank, bank=0 WHERE bank>0")
         await self.db.commit()
@@ -560,14 +594,54 @@ class EconomyBot(commands.Bot):
 
     # ───── работа с БД ─────
     async def get_user(self, guild_id: int, user_id: int) -> dict:
-        await self.db.execute(
+        select = ("SELECT balance,bank,last_daily,streak,last_work,last_rob FROM users "
+                  "WHERE guild_id=? AND user_id=?")
+        async with self.db.execute(select, (guild_id, user_id)) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            async with self.transaction() as db:
+                await self.ensure_user(db, guild_id, user_id)
+                async with db.execute(select, (guild_id, user_id)) as cur:
+                    row = await cur.fetchone()
+        return dict(zip(["balance", "bank", "last_daily", "streak", "last_work", "last_rob"], row))
+
+    @asynccontextmanager
+    async def transaction(self):
+        """Отдельное соединение: фоновые задачи не могут закоммитить операцию частично."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                yield db
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
+
+    async def ensure_user(self, db, guild_id: int, user_id: int):
+        await db.execute(
             "INSERT OR IGNORE INTO users(guild_id,user_id,balance) VALUES(?,?,?)",
             (guild_id, user_id, START_BALANCE))
-        cur = await self.db.execute(
-            "SELECT balance,bank,last_daily,streak,last_work,last_rob FROM users "
-            "WHERE guild_id=? AND user_id=?", (guild_id, user_id))
-        r = await cur.fetchone()
-        return dict(zip(["balance", "bank", "last_daily", "streak", "last_work", "last_rob"], r))
+
+    async def move_coins(self, guild_id: int, sender: int, recipient: int, amount: int,
+                         *, duel: bool = False) -> bool:
+        """Перевод или расчёт дуэли с проверкой обоих балансов в транзакции."""
+        async with self.transaction() as db:
+            for uid in (sender, recipient):
+                await self.ensure_user(db, guild_id, uid)
+            if duel:
+                async with db.execute("SELECT balance FROM users WHERE guild_id=? AND user_id=?",
+                                      (guild_id, recipient)) as cur:
+                    if (await cur.fetchone())[0] < amount:
+                        return False
+            cur = await db.execute(
+                "UPDATE users SET balance=balance-? WHERE guild_id=? AND user_id=? AND balance>=?",
+                (amount, guild_id, sender, amount))
+            if cur.rowcount != 1:
+                return False
+            await db.execute(
+                "UPDATE users SET balance=balance+?, duel_wins=duel_wins+? WHERE guild_id=? AND user_id=?",
+                (amount, int(duel), guild_id, recipient))
+        return True
 
     async def add(self, guild_id: int, user_id: int, amount: int, field: str = "balance"):
         await self.get_user(guild_id, user_id)

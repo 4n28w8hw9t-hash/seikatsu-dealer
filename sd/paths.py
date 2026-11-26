@@ -80,9 +80,12 @@ async def work(inter: discord.Interaction):
                                  rows=[["daily", "balance"]])
     lvl = level_of(await get_xp(g, uid))
     pay = work_pay(lvl)
-    await bot.set_field(g, uid, last_work=now)
-    await bot.add(g, uid, 1, "works")
-    await bot.add(g, uid, pay)
+    from .quests import record
+    async with bot.transaction() as db:
+        await db.execute(
+            "UPDATE users SET last_work=?, works=works+1, balance=balance+? WHERE guild_id=? AND user_id=?",
+            (now, pay, g, uid))
+        await record(db, g, uid, "work", now)
     title = rank_of(lvl, path, is_female(inter.user))
     await send_result(inter, title_banner(path, lvl, is_female(inter.user)) or "work",
                       f"{PATHS[path][0]} Служба окончена",

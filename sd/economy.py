@@ -62,8 +62,12 @@ async def daily(inter: discord.Interaction):
                                  "Пока можно сходить на службу или сыграть в монетку.",
                                  rows=[["work", "coin", "balance"]])
     streak = u["streak"] + 1 if now - u["last_daily"] < 2 * DAY else 1
-    await bot.set_field(g, uid, last_daily=now, streak=streak)
-    await bot.add(g, uid, DAILY_REWARD)
+    from .quests import record
+    async with bot.transaction() as db:
+        await db.execute(
+            "UPDATE users SET last_daily=?, streak=?, balance=balance+? WHERE guild_id=? AND user_id=?",
+            (now, streak, DAILY_REWARD, g, uid))
+        await record(db, g, uid, "daily", now)
     left_coins = u["balance"] + DAILY_REWARD
     await send_result(inter, "daily", "🎁 Награда получена",
                       f"+{fmt(DAILY_REWARD)} · серия {streak} дн.",
@@ -90,9 +94,9 @@ async def transfer(inter: discord.Interaction, участник: discord.Member,
     if u["balance"] < сумма:
         return await reply(inter, f"Не хватает монет: у тебя **{fmt(u['balance'])}**",
                            rows=[["balance", "daily"]])
-    await bot.add(g, uid, -сумма)
-    await bot.add(g, m.id, сумма)
-    left = u["balance"] - сумма
+    if not await bot.move_coins(g, uid, m.id, сумма):
+        return await reply(inter, "Не хватает монет для перевода", rows=[["balance", "daily"]])
+    left = (await bot.get_user(g, uid))["balance"]
     await send_result(inter, "balance", "💰 Перевод отправлен",
                       f"{m.display_name} получает {fmt(сумма)}",
                       f"Осталось у тебя: {left:,}".replace(",", " "), rows=[["balance"]])

@@ -166,6 +166,8 @@ async def on_message(message: discord.Message):
 @tasks.loop(minutes=1)
 async def tick():
     try:
+        from .quests import record
+        now = time.time()
         for guild in bot.guilds:  # опыт за голосовой чат
             for vc in guild.voice_channels:
                 if guild.afk_channel and vc.id == guild.afk_channel.id:
@@ -179,7 +181,11 @@ async def tick():
                 if len(ids) >= 2:  # в одиночку опыт не идёт
                     for uid in ids:
                         await add_xp(guild.id, uid, XP_VOICE)
-                        await bot.add(guild.id, uid, 1, "voice_min")
+                        async with bot.transaction() as db:
+                            await db.execute(
+                                "UPDATE users SET voice_min=voice_min+1 WHERE guild_id=? AND user_id=?",
+                                (guild.id, uid))
+                            await record(db, guild.id, uid, "voice", now)
         from .marriage import clean_rooms
         await clean_rooms()
     except Exception as ex:
