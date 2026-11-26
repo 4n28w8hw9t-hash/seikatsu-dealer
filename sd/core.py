@@ -379,12 +379,13 @@ async def send_card(inter: discord.Interaction, e: discord.Embed, key: str, **kw
 
 
 async def send_panel(inter: discord.Interaction, key: str, title: str, *, subtitle="", icon="",
-                     bar=None, tiles=(), lines=(), rows=None, nav=True, fallback=None):
+                     bar=None, tiles=(), lines=(), rows=None, nav=True, fallback=None,
+                     avatar: bytes | None = None):
     """Карточка-картинка: баннер, плитки с цифрами, строки (см. art.panel_card)."""
     path = getattr(bot, "banners", {}).get(key)
     try:
         img = await asyncio.to_thread(art.panel_card, path, title, subtitle, icon, bar,
-                                      list(tiles), list(lines))
+                                      list(tiles), list(lines), avatar=avatar)
         return await reply(inter, image=("panel.jpg", img), rows=rows, nav=nav)
     except Exception as ex:
         print("Панель не нарисована:", key, repr(ex))
