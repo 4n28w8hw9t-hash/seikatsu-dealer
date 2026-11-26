@@ -10,6 +10,7 @@ from .core import DAILY_REWARD, bot, btn, embed, fmt, fmt_time, iconize, member_
 from .core import send_panel, send_result, _OK, _G
 from .achievements import ACHIEVEMENTS, get_stats, unlock
 from .levels import PATHS, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, title_banner, work_pay, xp_for
+from .top import _ranked
 
 DAY = 24 * 3600
 
@@ -119,9 +120,21 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     lvl = s["level"]
     have, need = s["xp"] - xp_for(lvl), xp_for(lvl + 1) - xp_for(lvl)
     partner = "—"
+    ring_icon = None
     if s["marriage"]:
         other = s["marriage"]["b"] if s["marriage"]["a"] == m.id else s["marriage"]["a"]
         partner = await member_name(inter.guild, other)
+        ring_icon = f"ring_{s['marriage']['ring']}"
+    rank_medals = ("top_1", "top_2", "top_3")
+    top_level = await _ranked(inter.guild, "xp")
+    top_coins = await _ranked(inter.guild, "balance")
+
+    def top_cell(ranked, label):
+        place = next((i for i, (uid, _) in enumerate(ranked, 1) if uid == m.id), None)
+        medal = rank_medals[place - 1] if place and place <= 3 else None
+        value = f"Топ {place} из {len(ranked)}" if place else "—"
+        return (label, value, medal)
+
     vmin = s["voice"]
     path = await get_path(g, m.id)
     if path:
@@ -134,11 +147,13 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
         nxt_cell = ("Путь", "выбери в /путь")
     data = {"name": m.display_name, "title": title, "level": lvl, "have": have, "need": need,
             "cells": [("Монеты", f"{s['coins']:,}".replace(",", " ")),
-                      ("Пара", partner),
+                      ("Пара", partner, ring_icon),
                       ("Жалованье", f"{work_pay(lvl)} / 12 ч" if path else "—"),
                       ("В голосовых", f"{vmin // 60} ч {vmin % 60} мин"),
                       ("Достижения", f"{len(s['ach'])} / {len(ACHIEVEMENTS)}"),
-                      nxt_cell]}
+                      nxt_cell,
+                      top_cell(top_level, "Топ уровня"),
+                      top_cell(top_coins, "Топ монет")]}
     try:
         avatar = await m.display_avatar.replace(size=128, format="png").read()
     except Exception:
@@ -154,6 +169,8 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     except Exception as ex:
         print("Карточка профиля не нарисована:", repr(ex))
     e = embed(f"Профиль {m.display_name}", f"**{title}** · уровень **{lvl}** · опыт {have} / {need}")
-    for n, v in data["cells"]:
+    for cell in data["cells"]:
+        n, v = cell[:2]
         e.add_field(name=n, value=v)
     await reply(inter, embed=e, rows=rows)
+
