@@ -184,6 +184,8 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await showcase.show(inter)
     elif key == "showcase:save":
         await showcase.save(inter, (inter.data or {}).get("values") or [])
+    elif key == "showcase:toggle":
+        await showcase.save(inter, toggle=side)
     elif key == "showcase:clear":
         await showcase.save(inter, [])
     elif key == "help":
@@ -321,10 +323,10 @@ async def on_interaction(inter: discord.Interaction):
         vals = (inter.data or {}).get("values") or [""]
         key = str(vals[0])
     side = ""
-    if key in ("ringbook:action", "ringbook:giftselect", "inv:filter", "anniversary:pick"):
+    if key in ("ringbook:action", "ringbook:giftselect", "inv:filter", "anniversary:pick", "showcase:toggle"):
         vals = (inter.data or {}).get("values") or [""]
         side = str(vals[0])
-    if (key not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:clear")
+    if (key not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:toggle", "showcase:clear")
             and not key.startswith(("mk:", "inv:roles:", "history:"))):
         return
     try:

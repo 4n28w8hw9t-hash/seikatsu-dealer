@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 
 from .achievements import ACHIEVEMENTS, BY_KEY
-from .core import E, bot, button_icon, embed, send_card
+from .core import E, bot, button_icon, embed, reply
 
 SEASON_LABELS = ("Золото сезона", "Серебро сезона", "Бронза сезона")
 BADGE_LIMIT = 3
@@ -38,56 +38,79 @@ async def earned(guild_id, uid, *, db=None):
     return keys
 
 
-async def selection(guild_id, uid, available=None):
-    async with bot.db.execute("SELECT badges FROM profile_showcase WHERE guild_id=? AND user_id=?",
+async def selection(guild_id, uid, available=None, *, db=None):
+    db = db if db is not None else bot.db
+    async with db.execute("SELECT badges FROM profile_showcase WHERE guild_id=? AND user_id=?",
                               (guild_id, uid)) as cur:
         row = await cur.fetchone()
     if not row:
         return []
     if available is None:
-        available = await earned(guild_id, uid)
+        available = await earned(guild_id, uid, db=db)
     return [key for key in row[0].split(",") if key in available][:BADGE_LIMIT]
 
 
-async def save(inter, values):
+async def save(inter, values=(), *, toggle=None):
     g, uid = inter.guild_id, inter.user.id
     values = list(dict.fromkeys(values))
     async with bot.transaction() as db:
         available = await earned(g, uid, db=db)
-        valid = len(values) <= BADGE_LIMIT and all(key in available for key in values)
-        if valid:
+        notice = ""
+        if toggle is not None:
+            values = await selection(g, uid, available, db=db)
+            if toggle not in available:
+                notice = "Этот значок недоступен."
+            elif toggle in values:
+                values.remove(toggle)
+            elif len(values) == BADGE_LIMIT:
+                notice = "Сначала убери один из значков с витрины."
+            else:
+                values.append(toggle)
+        elif len(values) > BADGE_LIMIT or any(key not in available for key in values):
+            notice = "Некоторые значки недоступны. Выбери их заново."
+        if not notice:
             await db.execute(
                 "INSERT INTO profile_showcase(guild_id,user_id,badges) VALUES(?,?,?) "
                 "ON CONFLICT(guild_id,user_id) DO UPDATE SET badges=excluded.badges",
                 (g, uid, ",".join(values)))
-    await show(inter, "Витрина обновлена." if valid else "Некоторые значки недоступны. Выбери их заново.")
+    await show(inter, notice or "Витрина обновлена.")
+
+
+def badge_emoji(key):
+    _, icon, fallback = badge(key)
+    return E(f"sd_{icon}", E("sd_couple", fallback) if key == "pair:weekly" else fallback)
 
 
 async def show(inter: discord.Interaction, notice=""):
     g, uid = inter.guild_id, inter.user.id
     available = await earned(g, uid)
     selected = await selection(g, uid, available)
-    text = "Выбери до трёх заработанных значков для своего профиля."
-    if selected:
-        text += "\n\n**В профиле:** " + " · ".join(badge(key)[0] for key in selected)
+    lines = [f"**Значки в профиле · {len(selected)}/{BADGE_LIMIT}**"]
+    lines.extend(f"{badge_emoji(key)} {badge(key)[0]}" for key in selected)
+    if not selected:
+        lines.append("Витрина пока пуста.")
     if not available:
-        text += "\n\nПервые значки можно получить за достижения, месячный топ или поручение пары."
+        lines.append("Значки можно получить за достижения, месячный топ и поручения пары.")
     if notice:
-        text = f"{notice}\n\n{text}"
+        lines.extend(("", notice))
     rows = []
     if available:
-        options = []
-        for key in available[:25]:
-            name, icon, fallback = badge(key)
-            emoji = E(f"sd_{icon}", E("sd_couple", fallback) if key == "pair:weekly" else fallback)
-            options.append(discord.SelectOption(label=name, value=key, default=key in selected,
-                                                 emoji=discord.PartialEmoji.from_str(emoji)))
-        rows.append([discord.ui.Select(custom_id="sd:showcase:save", placeholder="Выбери значки",
-                                       max_values=min(BADGE_LIMIT, len(options)), options=options)])
+        options = [
+            discord.SelectOption(
+                label=badge(key)[0], value=key,
+                description="На витрине · убрать" if key in selected else "Добавить на витрину",
+                emoji=discord.PartialEmoji.from_str(badge_emoji(key)),
+            )
+            for key in available[:25]
+        ]
+        rows.extend(["---", [discord.ui.Select(
+            custom_id="sd:showcase:toggle", placeholder="Добавить или убрать значок", options=options,
+        )]])
     if selected:
-        rows.append([discord.ui.Button(label="Очистить витрину", custom_id="sd:showcase:clear")])
+        clear_icon = discord.PartialEmoji.from_str(button_icon("cancel") or "✖️")
+        rows.append([discord.ui.Button(label="Очистить витрину", emoji=clear_icon, custom_id="sd:showcase:clear")])
     icon = button_icon("showcase") or "🏅"
-    await send_card(inter, embed(f"{icon} Витрина профиля", text), "profile", rows=rows)
+    await reply(inter, embed=embed(f"{icon} Витрина профиля", "\n".join(lines)), rows=rows, key=None)
 
 
 @bot.tree.command(name="витрина", description="Выбрать значки для своего профиля")

@@ -415,17 +415,22 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
     _cells(img, d, data["cells"], tx, y + 22, right, cols=2)
     badges = data.get("showcase") or []
     if badges:
-        bx = tx
-        for key, label, name, _ in badges:
-            icon = _icon(name, 28)
+        gap = 10
+        width = (right - tx - 2 * gap) / 3
+        top, centre = H - 57, H - 38
+        for index, (key, label, name, _) in enumerate(badges[:3]):
+            left = round(tx + index * (width + gap))
+            end = round(tx + index * (width + gap) + width)
+            d.rounded_rectangle((left, top, end, H - 19), radius=7, fill=P_PANEL, outline=P_GOLD_D)
+            icon = _icon(name, 26)
             if icon is None and key == "pair:weekly":
-                icon = _icon("couple", 28)
+                icon = _icon("couple", 26)
             if icon:
-                img.paste(icon, (bx, H - 47), icon)
-            width = (right - tx) // 3
-            label, font = _pfit(d, label, "sc6", 18, width - 40, 12)
-            _t(d, (bx + 33, H - 43), label, font, P_GOLD)
-            bx += width
+                img.paste(icon, (left + 8, centre - 13), icon)
+            text_x = left + (41 if icon else 10)
+            label, font = _pfit(d, label, "sc6", 18, end - text_x - 8, 12)
+            _, text_top, _, text_bottom = d.textbbox((0, 0), label, font=font, features=_LNUM)
+            _t(d, (text_x, centre - (text_top + text_bottom) // 2), label, font, P_GOLD)
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")
