@@ -377,22 +377,28 @@ def _bar(d, x0, y, x1, have, need, label):
     return y + 16
 
 
-def _cells(d, cells, x0, y, x1, cols, h=74, gap=12):
+def _cells(img, d, cells, x0, y, x1, cols, h=74, gap=12):
     cw = (x1 - x0 - gap * (cols - 1)) / cols
-    for i, (label, value) in enumerate(cells):
+    for i, cell in enumerate(cells):
+        label, value = cell[:2]
+        icon = cell[2] if len(cell) > 2 else None
         cx = x0 + (i % cols) * (cw + gap)
         cy = y + (i // cols) * (h + gap)
         d.rounded_rectangle([cx, cy, cx + cw, cy + h], radius=8, fill=P_PANEL)
         d.rectangle([cx, cy + 10, cx + 3, cy + h - 10], fill=P_GOLD)
-        lab, f = _pfit(d, str(label).upper(), "sc6", 19, cw - 28, 12)
+        badge = _icon(icon, 36) if icon else None
+        text_w = cw - (70 if badge else 28)
+        lab, f = _pfit(d, str(label).upper(), "sc6", 19, text_w, 12)
         _t(d, (cx + 16, cy + 9), lab, f, P_MUTED)
-        val, f = _pfit(d, str(value), "text", 30, cw - 28, 15)
+        val, f = _pfit(d, str(value), "text", 30, text_w, 15)
         _t(d, (cx + 16, cy + 33), val, f, P_CREAM)
+        if badge:
+            img.paste(badge, (round(cx + cw - 48), round(cy + (h - 36) / 2)), badge)
 
 
 def profile_card(banner_path, data: dict, avatar: bytes | None = None,
-                 W: int = 1000, H: int = 500) -> bytes:
-    """Профиль: персонаж слева, аватар, имя, титул, шкала опыта и шесть плашек."""
+                 W: int = 1000, H: int = 600) -> bytes:
+    """Профиль: персонаж слева, аватар, имя, титул, опыт и карточки характеристик."""
     img = _pbg(W, H)
     tx = _portrait(img, banner_path, 360)
     d = ImageDraw.Draw(img)
@@ -406,7 +412,7 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
     _t(d, (nx, 86), head, f, P_GOLD)
     y = _bar(d, tx, 140, right, data["have"], max(1, data["need"]),
              f"Опыт {data['have']:,} / {data['need']:,}".replace(",", " "))
-    _cells(d, data["cells"][:6], tx, y + 22, right, cols=2)
+    _cells(img, d, data["cells"], tx, y + 22, right, cols=2)
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")
@@ -439,7 +445,7 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
     _t(d, (mid - _tl(d, lv, f) / 2, 190), lv, f, P_GOLD)
     y = _bar(d, tx, 236, right, data["have"], max(1, data["need"]),
              f"Опыт пары {data['have']:,} / {data['need']:,}".replace(",", " "))
-    _cells(d, data["cells"][:3], tx, y + 24, right, cols=3, h=80)
+    _cells(img, d, data["cells"][:3], tx, y + 24, right, cols=3, h=80)
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")
@@ -573,3 +579,4 @@ def thumb(char_path: str, size: int = 256) -> bytes | None:
     bg.convert("RGB").save(out, "PNG")
     _THUMBS[char_path] = out.getvalue()
     return _THUMBS[char_path]
+
