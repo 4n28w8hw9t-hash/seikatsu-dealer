@@ -70,28 +70,35 @@ async def get_rings(guild_id: int, user_id: int) -> dict[str, int]:
     return {k: q for k, q in await cur.fetchall()}
 
 
-def ring_action_select(owned: dict[str, int], current: str | None) -> discord.ui.Select:
+def ring_action_select(owned: dict[str, int], current: str | None,
+                       couple_owned: set[str]) -> discord.ui.Select:
     options = []
     for key, (name, price, _) in RINGS.items():
-        emoji = discord.PartialEmoji.from_str(ring_emo(key))
-        options.append(discord.SelectOption(
-            label=f"Купить: {name}", value=f"buy:{key}",
-            description=f"{price:,} монет".replace(",", " "), emoji=emoji))
+        if key not in couple_owned and key != current:
+            emoji = discord.PartialEmoji.from_str(ring_emo(key))
+            options.append(discord.SelectOption(
+                label=f"Купить: {name}", value=f"buy:{key}",
+                description=f"{price:,} монет".replace(",", " "), emoji=emoji))
     for key, (name, _, _) in RINGS.items():
         if owned.get(key, 0) > 0 and key != current:
             emoji = discord.PartialEmoji.from_str(ring_emo(key))
             options.append(discord.SelectOption(
                 label=f"Выбрать в профиле: {name}", value=f"wear:{key}",
                 description="Показывать это кольцо в профиле пары", emoji=emoji))
+    if not options:
+        options.append(discord.SelectOption(label="Все кольца уже собраны", value="noop",
+                                            description="Повторно покупать их нельзя"))
     return discord.ui.Select(custom_id="sd:ringbook:action", placeholder="Купить или выбрать кольцо",
                              min_values=1, max_values=1, options=options)
 
 
-def gift_ring_select(owned: dict[str, int]) -> discord.ui.Select:
+def gift_ring_select(owned: dict[str, int], partner_owned: dict[str, int],
+                     current: str | None) -> discord.ui.Select:
     options = [discord.SelectOption(
         label=f"Подарить: {RINGS[key][0]}", value=f"gift:{key}",
-        description=f"Есть в коллекции: {qty}", emoji=discord.PartialEmoji.from_str(ring_emo(key)))
-        for key, qty in owned.items() if key in RINGS and qty > 0]
+        description="Передать кольцо партнёру", emoji=discord.PartialEmoji.from_str(ring_emo(key)))
+        for key, qty in owned.items()
+        if key in RINGS and qty > 0 and not partner_owned.get(key, 0) and key != current]
     return discord.ui.Select(custom_id="sd:ringbook:giftselect", placeholder="Какое кольцо подарить?",
                              min_values=1, max_values=1, options=options)
 
@@ -102,17 +109,21 @@ async def show_ring_collection(inter: discord.Interaction, mar: dict | None = No
     if not mar:
         return await reply(inter, "Коллекция доступна участникам пары", rows=[["rings"]])
     owned = await get_rings(inter.guild_id, inter.user.id)
+    partner_owned = await get_rings(inter.guild_id, other_of(mar, inter.user.id))
     current = mar["ring"]
+    couple_owned = {key for key in RINGS
+                    if owned.get(key, 0) > 0 or partner_owned.get(key, 0) > 0 or key == current}
     card = [{"key": key, "name": name, "price": price,
-             "qty": owned.get(key, 0),
-             "owned": owned.get(key, 0) > 0 or key == current,
+             "qty": 0,
+             "owned": key in couple_owned,
              "current": key == current}
             for key, (name, price, _) in RINGS.items()]
     banner = getattr(bot, "banners", {}).get("marry") or getattr(bot, "banners", {}).get("help")
     try:
         png = await asyncio.to_thread(art.ring_collection_card, banner, card)
         return await reply(inter, note, image=("rings.png", png),
-                           rows=[[ring_action_select(owned, current)], ["ringgift", "couple", "rings"]],
+                           rows=[[ring_action_select(owned, current, couple_owned)],
+                                 ["ringgift", "couple", "rings"]],
                            key=None)
     except Exception as ex:
         print("Коллекция колец не нарисована:", repr(ex))
@@ -121,7 +132,8 @@ async def show_ring_collection(inter: discord.Interaction, mar: dict | None = No
              for r in card]
     e = embed("Коллекция колец", (note + "\n\n" if note else "") + "\n".join(lines))
     return await reply(inter, embed=e,
-                       rows=[[ring_action_select(owned, current)], ["ringgift", "couple", "rings"]], key=None)
+                       rows=[[ring_action_select(owned, current, couple_owned)],
+                             ["ringgift", "couple", "rings"]], key=None)
 
 
 async def choose_gift_ring(inter: discord.Interaction):
@@ -130,14 +142,22 @@ async def choose_gift_ring(inter: discord.Interaction):
         return await reply(inter, "Подарить кольцо можно только своему супругу или супруге",
                            rows=[["couple"]], key=None)
     owned = await get_rings(inter.guild_id, inter.user.id)
-    if not any(qty > 0 for qty in owned.values()):
-        return await reply(inter, "У тебя нет свободных колец для подарка. Сначала купи кольцо в коллекции.",
-                           rows=[["ringbook", "rings"]], key=None)
-    return await reply(inter, "Выбери кольцо для подарка:", rows=[[gift_ring_select(owned)]], key=None)
+    partner_owned = await get_rings(inter.guild_id, other_of(mar, inter.user.id))
+    available = {key: qty for key, qty in owned.items()
+                 if qty > 0 and not partner_owned.get(key, 0) and key != mar["ring"]}
+    if not available:
+        note = ("Все кольца, которые у тебя есть, уже представлены в коллекции пары."
+                if any(qty > 0 for qty in owned.values())
+                else "У тебя пока нет свободных колец. Купи не представленное в коллекции кольцо.")
+        return await reply(inter, note, rows=[["ringbook", "rings"]], key=None)
+    return await reply(inter, "Выбери кольцо для подарка:",
+                       rows=[[gift_ring_select(available, partner_owned, mar["ring"])]], key=None)
 
 
 async def ring_action(inter: discord.Interaction, action: str):
     verb, _, key = action.partition(":")
+    if verb == "noop":
+        return await show_ring_collection(inter, note="Все виды колец уже есть в коллекции пары.")
     if verb not in {"buy", "gift", "wear"} or key not in RINGS:
         return await reply(inter, "Не удалось определить действие с кольцом", key=None)
     g, uid = inter.guild_id, inter.user.id
@@ -147,7 +167,11 @@ async def ring_action(inter: discord.Interaction, action: str):
                            rows=[["rings"]], key=None)
     name, price, _ = RINGS[key]
     owned = await get_rings(g, uid)
+    recipient = other_of(mar, uid)
+    partner_owned = await get_rings(g, recipient)
     if verb == "buy":
+        if owned.get(key, 0) > 0 or partner_owned.get(key, 0) > 0 or mar["ring"] == key:
+            return await show_ring_collection(inter, mar, f"Кольцо «{name}» уже есть в коллекции пары.")
         user = await bot.get_user(g, uid)
         if user["balance"] < price:
             return await show_ring_collection(
@@ -161,7 +185,8 @@ async def ring_action(inter: discord.Interaction, action: str):
     if verb == "gift":
         if owned.get(key, 0) <= 0:
             return await show_ring_collection(inter, mar, f"У тебя нет кольца «{name}», чтобы подарить его.")
-        recipient = other_of(mar, uid)
+        if partner_owned.get(key, 0) > 0 or mar["ring"] == key:
+            return await show_ring_collection(inter, mar, f"У партнёра уже есть кольцо «{name}».")
         await bot.db.execute("UPDATE rings SET qty=qty-1 WHERE guild_id=? AND user_id=? AND ring=? AND qty>0",
                              (g, uid, key))
         await bot.db.execute(
@@ -194,12 +219,21 @@ def other_of(mar: dict, uid: int) -> int:
 @bot.tree.command(name="кольца", description="Лавка колец для предложения руки и сердца")
 async def rings_shop(inter: discord.Interaction):
     owned = await get_rings(inter.guild_id, inter.user.id)
-    lines = [f"{ring_emo(k)} **{name}** — {fmt(price)}" + (f"  · у тебя: {owned[k]}" if owned.get(k) else "")
-             for k, (name, price, emo) in RINGS.items()]
+    mar = await get_marriage(inter.guild_id, inter.user.id)
+    partner_owned = await get_rings(inter.guild_id, other_of(mar, inter.user.id)) if mar else {}
+    available = []
+    lines = []
+    for k, (name, price, _) in RINGS.items():
+        has = owned.get(k, 0) > 0 or partner_owned.get(k, 0) > 0 or (mar and mar["ring"] == k)
+        lines.append(f"{ring_emo(k)} **{name}** — {fmt(price)}" +
+                     (" · **есть в коллекции**" if has else ""))
+        if not has:
+            available.append(f"ring:{k}")
     e = embed("💍 Лавка колец", "\n".join(lines) +
-              "\n\nКольцо нужно, чтобы сделать предложение: `/брак @участник`.\n"
-              "Предложение делается самым дорогим из твоих колец, оно будет видно в парном профиле.")
-    await send_card(inter, e, "shop", rows=[[f"ring:{k}" for k in RINGS]])
+              "\n\nКаждый вид кольца можно добавить в коллекцию один раз. "
+              "Уже купленные или подаренные кольца повторно купить нельзя.\n"
+              "Для предложения нужно любое кольцо из коллекции: `/брак @участник`.")
+    await send_card(inter, e, "shop", rows=[available or ["couple"]])
 
 
 async def buy_ring(inter: discord.Interaction, key: str):
@@ -207,6 +241,13 @@ async def buy_ring(inter: discord.Interaction, key: str):
         return
     name, price, _ = RINGS[key]
     emo = ring_emo(key)
+    mar = await get_marriage(inter.guild_id, inter.user.id)
+    owned = await get_rings(inter.guild_id, inter.user.id)
+    partner_owned = await get_rings(inter.guild_id, other_of(mar, inter.user.id)) if mar else {}
+    if owned.get(key, 0) > 0 or partner_owned.get(key, 0) > 0 or (mar and mar["ring"] == key):
+        return await reply(inter, f"Кольцо «{name}» уже есть в коллекции" +
+                           (" пары" if mar else "") + ". Повторно купить его нельзя.",
+                           rows=[["ringbook", "couple"]] if mar else [["rings", "couple"]])
     u = await bot.get_user(inter.guild_id, inter.user.id)
     if u["balance"] < price:
         return await reply(inter, f"Не хватает монет: {name} стоит **{fmt(price)}**",
@@ -217,9 +258,10 @@ async def buy_ring(inter: discord.Interaction, key: str):
         "ON CONFLICT(guild_id,user_id,ring) DO UPDATE SET qty=qty+1",
         (inter.guild_id, inter.user.id, key))
     await bot.db.commit()
-    e = embed(f"{emo} Куплено: {name}", f"Списано **{fmt(price)}**.\n"
-              "Теперь можно сделать предложение: `/брак @участник`.", discord.Color.green())
-    await send_card(inter, e, "shop", rows=[["rings", "couple"]])
+    note = ("Кольцо добавлено в коллекцию пары. Его можно подарить или выбрать для профиля."
+            if mar else "Теперь можно сделать предложение: `/брак @участник`.")
+    e = embed(f"{emo} Куплено: {name}", f"Списано **{fmt(price)}**.\n{note}", discord.Color.green())
+    await send_card(inter, e, "shop", rows=[["ringbook", "couple"]] if mar else [["rings", "couple"]])
 
 
 # ═════════ Предложение ═════════
