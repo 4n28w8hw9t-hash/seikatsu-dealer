@@ -333,17 +333,31 @@ async def inventory_rings(inter: discord.Interaction):
     g, uid = inter.guild_id, inter.user.id
     stock = await get_rings(g, uid)
     mar = await get_marriage(g, uid)
-    active_name = RINGS[mar["ring"]][0] if mar and mar["ring"] in RINGS else "—"
-    lines = [f"{ring_emo(key)} **{name}** · {stock.get(key, 0)}"
-             for key, (name, _, _) in RINGS.items()]
-    text = f"**Личный запас:** {sum(stock.get(key, 0) for key in RINGS)}\n" + "\n".join(lines)
     rows = [[btn("inventory", "Роли", style=_G), btn("inv:rings")]]
+    total = sum(stock.get(key, 0) for key in RINGS)
     if mar:
         partner_stock = await get_rings(g, other_of(mar, uid))
         shared = collection_keys(mar, stock, partner_stock)
-        text += f"\n\n**Коллекция пары:** {len(shared)}/{len(RINGS)} · **В профиле:** {active_name}"
+        lines = []
+        for key, (name, _, _) in RINGS.items():
+            tags = []
+            if key == mar["ring"]:
+                tags.append("в профиле пары")
+            if key == mar["bond_ring"]:
+                tags.append("обручальное")
+            if stock.get(key):
+                tags.append(f"у тебя: {stock[key]}")
+            if partner_stock.get(key):
+                tags.append(f"у партнёра: {partner_stock[key]}")
+            lines.append(f"{ring_emo(key)} **{name}** · " + (" · ".join(tags) if tags else "нет в коллекции"))
+        text = f"**Коллекция пары:** {len(shared)}/{len(RINGS)}\n" + "\n".join(lines)
+        text += f"\n\n**Личный запас:** {total}"
         rows.append(["ringbook", "rings"])
     else:
+        lines = [f"{ring_emo(key)} **{name}** · {stock.get(key, 0)}"
+                 for key, (name, _, _) in RINGS.items()]
+        text = f"**Личный запас:** {total}\n" + "\n".join(lines)
+        text += "\n\nКоллекция пары появится после свадьбы."
         rows.append(["rings"])
     await send_card(inter, embed("🎒 Инвентарь · Кольца", text), "shop", rows=rows)
 

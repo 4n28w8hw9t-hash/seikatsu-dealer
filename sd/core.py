@@ -122,7 +122,7 @@ BUTTONS = {
     "daily": ("Награда", "🎁", "gift", _OK),
     "coin": ("Монетка", "🪙", "flip", _R),
     "couple": ("Пара", "💞", "couple", _B),
-    "rings": ("Кольца", "💍", "ring", _G),
+    "rings": ("Магазин колец", "🛒", "ring_shop", _G),
     "ringbook": ("Коллекция колец", "💍", "ring", _B),
     "ringbook:action": ("Действие с кольцом", "💍", "ring", _B),
     "ringbook:giftselect": ("Выбор кольца для подарка", "🎁", "gift", _B),
@@ -137,7 +137,7 @@ BUTTONS = {
     "roles": ("Мои роли", "🎭", "inv", _B),
     "inventory": ("Инвентарь", "🎒", "inventory_chest", _B),
     "inv:rings": ("Кольца", "💍", "ring", _B),
-    "quests": ("Поручения", "📜", "help", _B),
+    "quests": ("Поручения", "📜", "quest_book", _B),
     "quests:claim": ("Забрать награду", "🎁", "gift", _OK),
     "anniversary": ("Годовщина", "🏅", "top", _B),
     "anniversary:celebrate": ("Отпраздновать", "🎉", "win", _OK),
@@ -198,9 +198,17 @@ def icon_emoji(u: str):
     return u
 
 
+BUTTON_ICON_FALLBACKS = {"ring_shop": "shop", "quest_book": "help"}
+
+
+def button_icon(icon: str) -> str:
+    fallback = BUTTON_ICON_FALLBACKS.get(icon)
+    return E(f"sd_{icon}") or (E(f"sd_{fallback}") if fallback else "")
+
+
 def make_button(key: str) -> discord.ui.Button:
     label, emo, icon, style = BUTTONS[key]
-    custom = getattr(bot, "emo", {}).get(f"sd_{icon}")
+    custom = button_icon(icon)
     if custom:
         try:
             emo = discord.PartialEmoji.from_str(custom)

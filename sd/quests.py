@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord import app_commands
 
-from .core import bot, embed, fmt, send_card
+from .core import E, bot, button_icon, embed, fmt, send_card
 
 COURT_TZ = timezone(timedelta(hours=3))
 QUESTS = (
@@ -13,6 +13,14 @@ QUESTS = (
     ("daily", "Забрать ежедневную награду", 3, "раза"),
 )
 REWARD = 350
+QUEST_ICONS = {"work": ("quest_work", "work", "⚒️"),
+               "voice": ("quest_voice", "ach_voice10", "🎙️"),
+               "daily": ("quest_daily", "gift", "🎁")}
+
+
+def quest_icon(key: str) -> str:
+    icon, fallback, emoji = QUEST_ICONS[key]
+    return E(f"sd_{icon}") or (E(f"sd_{fallback}", emoji) if fallback else emoji)
 
 
 def week_window(now=None):
@@ -46,8 +54,11 @@ def complete(counts):
 async def show(inter: discord.Interaction, notice=""):
     week, ends = week_window()
     counts = await progress(bot.db, inter.guild_id, inter.user.id, week)
-    lines = [f"{'✅' if count >= need else '◇'} **{title}** · {min(count, need)}/{need} {unit}"
-             for (_, title, need, unit), count in zip(QUESTS, counts)]
+    lines = [
+        f"{quest_icon(key)} **{title}** · {min(count, need)}/{need} {unit}"
+        + (" · ✅" if count >= need else "")
+        for (key, title, need, unit), count in zip(QUESTS, counts)
+    ]
     reward = "Награда получена" if counts[3] else f"За все три задания: **{fmt(REWARD)}**"
     text = "\n".join([f"Новая неделя <t:{ends}:R>.", "", *lines, "", reward])
     if notice:
@@ -55,7 +66,7 @@ async def show(inter: discord.Interaction, notice=""):
     rows = [["work", "daily"]]
     if complete(counts) and not counts[3]:
         rows.insert(0, ["quests:claim"])
-    await send_card(inter, embed("📜 Поручения двора", text), "help", rows=rows)
+    await send_card(inter, embed(f"{button_icon('quest_book') or '📜'} Поручения двора", text), "help", rows=rows)
 
 
 async def claim(inter: discord.Interaction):

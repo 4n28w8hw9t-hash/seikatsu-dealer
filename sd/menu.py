@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 
 from .core import wrong_channel, E, card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, fmt, reply, send_card, too_fast
-from .core import btn, fmt_time, member_name, send_panel, _OK, _G
+from .core import btn, button_icon, fmt_time, member_name, send_panel, _OK, _G
 from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
@@ -76,7 +76,7 @@ SECTIONS = [
     ("coin", "Монетка", "Орёл или решка, выигрыш x2"),
     ("duel", "Дуэль", "Открытый вызов — принять может любой"),
     ("couple", "Пара", "Карточка пары, лав-рума, название"),
-    ("rings", "Кольца", "Купить кольцо для предложения"),
+    ("rings", "Магазин колец", "Посмотреть и купить кольца"),
     ("loveroom", "Лав-рума", "Открыть комнату для двоих"),
     ("market", "Рынок ролей", "Роли, созданные игроками"),
     ("roles", "Мои роли", "Надеть, снять, продать"),
@@ -94,7 +94,7 @@ def sections_select() -> discord.ui.Select:
     opts = []
     for key, label, desc in SECTIONS:
         icon = BUTTONS[key][2] if key in BUTTONS else ""
-        emo = E(f"sd_{icon}") if icon else ""
+        emo = button_icon(icon)
         try:
             emo = discord.PartialEmoji.from_str(emo) if emo else None
         except Exception:
@@ -155,7 +155,7 @@ async def dashboard(inter: discord.Interaction):
                  _OK if (path and w_left <= 0) else _G),
              btn("profile"), btn("inventory"), btn("balance")]
     await send_panel(inter, "menu", f"Покои · {m.display_name}", subtitle=sub, icon="profile",
-                     bar=bar, tiles=tiles, lines=lines, rows=[quick, ["quests"], [sections_select()]], nav=False)
+                     bar=bar, tiles=tiles, lines=lines, rows=[quick[:3], [*quick[3:], "quests"], [sections_select()]], nav=False)
 
 
 async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
