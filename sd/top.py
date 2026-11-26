@@ -2,7 +2,7 @@
 (banners/top_lvl, banners/top_coin; пока их нет — общий баннер «top»)."""
 import discord
 
-from .core import _B, _G, RED, E, bot, btn, send_card
+from .core import _B, _G, RED, E, bot, btn, button_icon, send_card
 from .levels import get_path, is_female, level_of, rank_of
 from .season import month_window, ranked as season_ranked
 
@@ -65,6 +65,8 @@ async def show_top(inter: discord.Interaction, tab: str = "lvl"):
         mine = f"Ты — **#{place}** из {len(ranked)} · до #{place - 1}: **+{_n(gap)}** {unit}"
 
     icon = E(f"sd_top_{tab}", "⭐" if tab == "lvl" else "💰")
+    if tab == "season":
+        icon = button_icon("season_top") or "🏅"
     e = discord.Embed(title=f"{icon} {title}", color=RED,
                       description=f"-# {sub}\n\n" + "\n".join(lines) + f"\n\n{mine}")
     rows = [[btn(f"top:{kind}", style=_B if tab == kind else _G) for kind in TABS]]
