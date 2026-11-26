@@ -169,8 +169,7 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     data["showcase"] = [(key, *badge(key)) for key in await selection(g, m.id)]
     banners = getattr(bot, "banners", {})
     actions = ["work", "path", "ach", "couple"]
-    weekly_quests = btn("quests", label="Еженедельные поручения")
-    extras = [weekly_quests]
+    extras = ["quests"]
     if m.id == inter.user.id:
         actions.append("inventory")
         extras.insert(0, "showcase")
