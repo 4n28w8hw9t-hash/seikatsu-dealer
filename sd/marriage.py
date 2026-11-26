@@ -325,7 +325,7 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
                       ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
     mine = inter.user.id in (mar["a"], mar["b"])
-    rows = [["ringbook"], ["loveroom", "roomname", "divorce"]] if mine else []
+    rows = [["loveroom"], ["ringbook", "roomname", "divorce"]] if mine else []
     banners = getattr(bot, "banners", {})
     try:
         png = await asyncio.to_thread(
