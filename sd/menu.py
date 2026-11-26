@@ -67,6 +67,8 @@ MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"
 
 # выпадающий список «Все разделы»: (ключ, подпись, пояснение)
 SECTIONS = [
+    ("profile", "Профиль", "Твой уровень, титул и место в топе"),
+    ("inventory", "Инвентарь", "Твои роли и кольца"),
     ("path", "Путь и титул", "Знать или Вера, следующее звание"),
     ("top", "Топ двора", "Лучшие по уровню и по монетам"),
     ("ach", "Достижения", "Награды за успехи"),
@@ -77,7 +79,6 @@ SECTIONS = [
     ("loveroom", "Лав-рума", "Открыть комнату для двоих"),
     ("market", "Рынок ролей", "Роли, созданные игроками"),
     ("roles", "Мои роли", "Надеть, снять, продать"),
-    ("inventory", "Инвентарь", "Количество ролей и колец"),
     ("rolecreate", "Создать роль", "Своя роль за 10 000"),
     ("help", "Помощь", "Все команды"),
 ]
@@ -151,7 +152,7 @@ async def dashboard(inter: discord.Interaction):
              btn("work", "Работа" if (path and w_left <= 0) else
                  ("Работа" if not path else f"Работа · {short_time(w_left)}"),
                  _OK if (path and w_left <= 0) else _G),
-             btn("profile"), btn("balance")]
+             btn("profile"), btn("inventory"), btn("balance")]
     await send_panel(inter, "menu", f"Покои · {m.display_name}", subtitle=sub, icon="profile",
                      bar=bar, tiles=tiles, lines=lines, rows=[quick, [sections_select()]], nav=False)
 
@@ -316,11 +317,11 @@ def menu_page() -> dict:
     """Общая панель меню (для канала): баннер, быстрые кнопки и список разделов."""
     e = discord.Embed(
         title="Двор Seikatsu — меню",
-        description=("Жми «Меню» — откроются твои покои: монеты, награда, служба и прогресс.\n"
+        description=("Профиль и инвентарь всегда под рукой. В меню — монеты, награда, служба и прогресс.\n"
                      "-# Командами остались действия с другим игроком: "
                      "`/перевод`, `/дуэль` и `/брак`."),
         color=RED)
-    rows = [["menu", "daily", "work", "profile", "balance"], [sections_select()]]
+    rows = [["menu", "daily", "work"], ["profile", "inventory", "balance"], [sections_select()]]
     kw = {"embed": e, "rows": rows, "nav": False}
     b = getattr(bot, "banners", {})
     path = b.get("menu") or b.get("help")
