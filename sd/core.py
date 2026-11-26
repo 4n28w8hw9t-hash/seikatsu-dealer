@@ -122,6 +122,8 @@ BUTTONS = {
     "coin": ("Монетка", "🪙", "flip", _R),
     "couple": ("Пара", "💞", "couple", _B),
     "rings": ("Кольца", "💍", "ring", _G),
+    "ringbook": ("Коллекция колец", "💍", "ring", _B),
+    "ringbook:action": ("Действие с кольцом", "💍", "ring", _B),
     "loveroom": ("Лав-рума", "🕯️", "loveroom", _B),
     "divorce": ("Развод", "💔", "divorce", _G),
     "divorce:yes": ("Да, развестись", "💔", "divorce", _R),
@@ -637,3 +639,4 @@ async def on_guild_join(guild: discord.Guild):
         await ch.send(embed=e, file=file)
     else:
         await ch.send(embed=e)
+
