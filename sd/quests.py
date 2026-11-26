@@ -10,9 +10,10 @@ from .ledger import record as ledger_record
 COURT_TZ = timezone(timedelta(hours=3))
 QUESTS = (
     ("work", "Получить жалованье", 2, "раз"),
-    ("voice", "Провести время в голосовом", 30, "мин"),
+    ("voice", "Провести время в голосовом", 12 * 60, "мин"),
     ("daily", "Забрать ежедневную награду", 3, "раза"),
 )
+VOICE_GOAL_START_WEEK = "2026-11-30"
 REWARD = 350
 QUEST_ICONS = {"work": ("quest_work", "work", "⚒️"),
                "voice": ("quest_voice", "ach_voice10", "🎙️"),
@@ -48,26 +49,46 @@ async def progress(db, guild_id, user_id, week):
         return await cur.fetchone() or (0, 0, 0, 0)
 
 
-def complete(counts):
-    return all(value >= quest[2] for value, quest in zip(counts, QUESTS))
+def goals_for_week(week):
+    if week >= VOICE_GOAL_START_WEEK:
+        return QUESTS
+    return tuple((key, title, 30 if key == "voice" else need, unit)
+                 for key, title, need, unit in QUESTS)
+
+
+def complete(counts, goals):
+    return all(value >= goal[2] for value, goal in zip(counts, goals))
+
+
+def voice_time(minutes):
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} ч {minutes} мин" if minutes else f"{hours} ч"
+    return f"{minutes} мин"
+
+
+def quest_line(goal, count):
+    key, title, need, unit = goal
+    shown = min(count, need)
+    progress_text = (f"{voice_time(shown)} / {voice_time(need)}" if key == "voice"
+                     else f"{shown}/{need} {unit}")
+    done = " · ✅" if count >= need else ""
+    return f"{quest_icon(key)} **{title}** · {progress_text}{done}"
 
 
 async def show(inter: discord.Interaction, notice=""):
     week, ends = week_window()
     counts = await progress(bot.db, inter.guild_id, inter.user.id, week)
-    lines = [
-        f"{quest_icon(key)} **{title}** · {min(count, need)}/{need} {unit}"
-        + (" · ✅" if count >= need else "")
-        for (key, title, need, unit), count in zip(QUESTS, counts)
-    ]
+    goals = goals_for_week(week)
+    lines = [quest_line(goal, count) for goal, count in zip(goals, counts)]
     reward = "Награда получена" if counts[3] else f"За все три задания: **{fmt(REWARD)}**"
     text = "\n".join([f"Новая неделя <t:{ends}:R>.", "", *lines, "", reward])
     if notice:
         text = notice + "\n\n" + text
     rows = [["work", "daily"]]
-    if complete(counts) and not counts[3]:
+    if complete(counts, goals) and not counts[3]:
         rows.insert(0, ["quests:claim"])
-    await send_card(inter, embed(f"{button_icon('quest_book') or '📜'} Поручения двора", text), "help", rows=rows)
+    await send_card(inter, embed(f"{button_icon('quest_book') or '📜'} Поручения двора", text), "quests", rows=rows)
 
 
 async def claim(inter: discord.Interaction):
@@ -77,7 +98,7 @@ async def claim(inter: discord.Interaction):
         counts = await progress(db, g, uid, week)
         if counts[3]:
             note = "Ты уже забрал награду за эту неделю."
-        elif not complete(counts):
+        elif not complete(counts, goals_for_week(week)):
             note = "Сначала выполни все три поручения."
         else:
             await bot.ensure_user(db, g, uid)
