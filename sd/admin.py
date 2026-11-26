@@ -5,7 +5,7 @@ from discord import app_commands
 from .chronicle import move_old_chronicle
 from .core import V2, bot, build_classic, build_page, fmt, reply
 from .market import delete_role
-from .marriage import dissolve, get_marriage
+from .marriage import finish_dissolve, get_marriage, retire_marriage
 from .menu import menu_page
 
 
@@ -16,31 +16,50 @@ admin = app_commands.Group(name="эко", description="Управление мо
 
 
 @admin.command(name="выдать", description="Выдать монеты")
-async def a_give(inter: discord.Interaction, участник: discord.Member, сумма: int):
-    await bot.add(inter.guild_id, участник.id, сумма, reason="admin")
+@app_commands.checks.has_permissions(administrator=True)
+async def a_give(inter: discord.Interaction, участник: discord.Member, сумма: app_commands.Range[int, 1, 1_000_000_000]):
+    await bot.adjust_staff_balance(inter.guild_id, участник.id, сумма)
     await reply(inter, f"✅ Выдано {участник.mention}: **{fmt(сумма)}**", key=None, nav=False)
 
 
 @admin.command(name="забрать", description="Забрать монеты из кошелька")
-async def a_take(inter: discord.Interaction, участник: discord.Member, сумма: int):
-    await bot.add(inter.guild_id, участник.id, -сумма, reason="admin")
+@app_commands.checks.has_permissions(administrator=True)
+async def a_take(inter: discord.Interaction, участник: discord.Member, сумма: app_commands.Range[int, 1, 1_000_000_000]):
+    if not await bot.adjust_staff_balance(inter.guild_id, участник.id, -сумма):
+        return await reply(inter, "В кошельке участника недостаточно монет.", key=None, nav=False)
     await reply(inter, f"✅ Забрано у {участник.mention}: **{fmt(сумма)}**", key=None, nav=False)
 
 
-@admin.command(name="сбросить", description="Обнулить участника")
-async def a_reset(inter: discord.Interaction, участник: discord.Member):
-    await bot.db.execute("DELETE FROM users WHERE guild_id=? AND user_id=?",
-                         (inter.guild_id, участник.id))
-    await bot.db.execute("DELETE FROM rings WHERE guild_id=? AND user_id=?",
-                         (inter.guild_id, участник.id))
-    await bot.db.commit()
-    mar = await get_marriage(inter.guild_id, участник.id)
+RESET_SCOPE = ("Будут сброшены кошелёк, опыт, путь, достижения, личные кольца, "
+               "прогресс поручений и сезонного топа, выбранные значки и текущий брак. "
+               "Роли, история монет и заработанные памятные медали сохранятся.")
+
+
+async def reset_profile(guild, member_id):
+    key = guild.id, member_id
+    async with bot.transaction() as db:
+        mar = await get_marriage(*key, db=db)
+        for table in ("users", "rings", "weekly_quests", "season_xp", "profile_showcase"):
+            await db.execute(f"DELETE FROM {table} WHERE guild_id=? AND user_id=?", key)
+        if mar:
+            await retire_marriage(db, guild.id, mar)
     if mar:
-        await dissolve(inter.guild, mar)
-    await reply(inter, f"♻️ {участник.mention} обнулён", key=None, nav=False)
+        await finish_dissolve(guild, mar)
+
+
+@admin.command(name="сбросить", description="Сбросить прогресс участника")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(подтвердить="Сбросить прогресс, личные кольца и текущий брак")
+async def a_reset(inter: discord.Interaction, участник: discord.Member, подтвердить: bool = False):
+    if not подтвердить:
+        return await reply(inter, RESET_SCOPE, key=None, nav=False, ephemeral=True)
+    await reset_profile(inter.guild, участник.id)
+    log(inter, участник, "прогресс сброшен")
+    await reply(inter, f"♻️ Прогресс {участник.mention} сброшен", key=None, nav=False)
 
 
 @admin.command(name="роль_удалить", description="Удалить роль, созданную игроком")
+@app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(роль="Какую роль удалить")
 async def a_del_role(inter: discord.Interaction, роль: discord.Role):
     cur = await bot.db.execute("SELECT id FROM custom_roles WHERE guild_id=? AND role_id=?",
@@ -48,11 +67,13 @@ async def a_del_role(inter: discord.Interaction, роль: discord.Role):
     row = await cur.fetchone()
     if not row:
         return await reply(inter, "Это не роль игрока", key=None, nav=False)
-    await delete_role(inter.guild, row[0])
+    if not await delete_role(inter.guild, row[0]):
+        return await reply(inter, "Discord не подтвердил удаление роли. Проверь права бота.", key=None, nav=False)
     await reply(inter, f"🗑️ Роль **{роль.name}** удалена", key=None, nav=False)
 
 
 @admin.command(name="панель", description="Поставить в этот канал постоянное меню с кнопками")
+@app_commands.checks.has_permissions(administrator=True)
 async def a_panel(inter: discord.Interaction):
     try:
         sent = False
@@ -185,7 +206,7 @@ async def staff_card(guild: discord.Guild, m: discord.Member, note: str = ""):
 def log(inter: discord.Interaction, m: discord.Member, what: str):
     print(f"[АДМИН] {inter.user} ({inter.user.id}) → {m} ({m.id}): {what}")
     from .chronicle import jlog
-    jlog(inter.guild, f"🛠️ {inter.user.mention} → {m.mention}: {what}")
+    jlog(inter.guild, f"🛠️ {inter.user.mention} → <@{m.id}>: {what}")
 
 
 class NumModal(discord.ui.Modal):
@@ -196,12 +217,32 @@ class NumModal(discord.ui.Modal):
         self.add_item(self.value)
 
     async def on_submit(self, inter: discord.Interaction):
+        if not await self.panel.interaction_check(inter):
+            return
         raw = str(self.value.value).replace(" ", "").replace("+", "")
         try:
             n = int(raw)
         except ValueError:
             return await inter.response.send_message("Нужно целое число", ephemeral=True)
         await self.panel.apply(inter, self.kind, n)
+
+
+class StaffSection(discord.ui.Select):
+    def __init__(self, owner_id, member, section):
+        self.owner_id, self.member = owner_id, member
+        super().__init__(placeholder="Раздел Канцелярии", row=4, options=[
+            discord.SelectOption(label="Профиль участника", value="profile", emoji=em("profile", "👤"),
+                                 default=section == "profile"),
+            discord.SelectOption(label="Модерация", value="moderation", emoji=em("adm_scales", "🛡️"),
+                                 default=section == "moderation"),
+        ])
+
+    async def callback(self, inter: discord.Interaction):
+        if self.values[0] == "moderation":
+            from .moderation import ModerationView
+            await ModerationView(self.owner_id, self.member).show(inter)
+        else:
+            await StaffView(self.owner_id, self.member).show(inter)
 
 
 class StaffView(discord.ui.View):
@@ -212,6 +253,7 @@ class StaffView(discord.ui.View):
             for item in list(self.children):
                 if not isinstance(item, discord.ui.UserSelect):
                     self.remove_item(item)
+        self.add_item(StaffSection(owner_id, member, "profile"))
         icons = {"Монеты ±": ("adm_plus", "💰"), "Задать баланс": ("adm_scales", "🏦"),
                  "Уровень": ("adm_level", "⭐"), "Опыт ±": ("adm_xp", "✨"),
                  "Обновить": ("adm_log", "🔄"), "Обнулить участника": ("adm_burn", "♻️")}
@@ -235,7 +277,7 @@ class StaffView(discord.ui.View):
     async def show(self, inter: discord.Interaction, note: str = ""):
         if not inter.response.is_done():
             await inter.response.defer()
-        e, f = await staff_card(inter.guild, self.member, note)
+        e, f = await staff_page(inter.guild_id, self.member, inter.guild, note)
         await inter.edit_original_response(embed=e, attachments=[f] if f else [],
                                            view=StaffView(self.owner_id, self.member))
 
@@ -243,7 +285,9 @@ class StaffView(discord.ui.View):
         g, m = inter.guild_id, self.member
         async with ECON_LOCK:
             if kind == "coins_add":
-                await bot.add(g, m.id, n, reason="admin")
+                if not await bot.adjust_staff_balance(g, m.id, n):
+                    return await inter.response.send_message(
+                        "В кошельке участника недостаточно монет.", ephemeral=True)
                 note = f"{'Выдано' if n >= 0 else 'Забрано'} {num(abs(n))} монет"
             elif kind == "coins_set":
                 from .ledger import record
@@ -340,7 +384,8 @@ class StaffView(discord.ui.View):
 
     @discord.ui.button(label="Обнулить участника", emoji="♻️", style=discord.ButtonStyle.danger, row=3)
     async def b_reset(self, inter, _):
-        await inter.response.edit_message(view=ConfirmReset(self))
+        await inter.response.edit_message(embed=discord.Embed(title="Сброс прогресса", description=RESET_SCOPE),
+                                          attachments=[], view=ConfirmReset(self))
 
 
 class ConfirmReset(discord.ui.View):
@@ -349,18 +394,14 @@ class ConfirmReset(discord.ui.View):
         self.panel = panel
 
     async def interaction_check(self, inter: discord.Interaction) -> bool:
-        return inter.user.id == self.panel.owner_id
+        return await self.panel.interaction_check(inter)
 
-    @discord.ui.button(label="Да, обнулить всё", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Сбросить прогресс", style=discord.ButtonStyle.danger)
     async def yes(self, inter: discord.Interaction, _):
         m = self.panel.member
+        await inter.response.defer()
         async with ECON_LOCK:
-            await bot.db.execute("DELETE FROM users WHERE guild_id=? AND user_id=?", (inter.guild_id, m.id))
-            await bot.db.execute("DELETE FROM rings WHERE guild_id=? AND user_id=?", (inter.guild_id, m.id))
-            await bot.db.commit()
-            mar = await get_marriage(inter.guild_id, m.id)
-            if mar:
-                await dissolve(inter.guild, mar)
+            await reset_profile(inter.guild, m.id)
         log(inter, m, "обнулён")
         await self.panel.show(inter, "Участник обнулён")
 
@@ -369,7 +410,25 @@ class ConfirmReset(discord.ui.View):
         await self.panel.show(inter)
 
 
-@bot.tree.command(name="админ", description="Админ-панель: монеты, уровни, пути, кольца участников")
+async def staff_page(guild_id, member, guild, note=""):
+    if member:
+        e, f = await staff_card(guild, member, note)
+    else:
+        bn = getattr(bot, "banners", {})
+        path = bn.get("admin") or bn.get("top")
+        f = discord.File(path, filename="staff.jpg") if path and os.path.exists(path) else None
+        probs = getattr(bot, "perm_report", {}).get(guild_id, [])
+        check = ("🔎 Проверка прав: всё в порядке ✅" if not probs else
+                 "🔎 **Проверка прав — есть проблемы:**\n• " + "\n• ".join(probs))
+        e = discord.Embed(title="Канцелярия двора",
+                          description="Выбери участника или раздел Канцелярии.\n\n" + check,
+                          color=discord.Color.from_rgb(150, 30, 40))
+        if f:
+            e.set_image(url="attachment://staff.jpg")
+    return e, f
+
+
+@bot.tree.command(name="админ", description="Канцелярия: профиль участника и модерация")
 @app_commands.guild_only()
 @app_commands.describe(участник="Кого открыть сразу (можно выбрать потом в меню)")
 async def staff_panel(inter: discord.Interaction, участник: discord.Member | None = None):
@@ -377,24 +436,9 @@ async def staff_panel(inter: discord.Interaction, участник: discord.Memb
         return await inter.followup.send("🥀 Панель только для администрации", ephemeral=True)
     if участник and участник.bot:
         участник = None
-    view = StaffView(inter.user.id, участник)
-    if участник:
-        e, f = await staff_card(inter.guild, участник)
-    else:
-        bn = getattr(bot, "banners", {})
-        path = bn.get("admin") or bn.get("top")
-        f = discord.File(path, filename="staff.jpg") if path and os.path.exists(path) else None
-        probs = getattr(bot, "perm_report", {}).get(inter.guild_id, [])
-        check = ("🔎 Проверка прав: всё в порядке ✅" if not probs else
-                 "🔎 **Проверка прав — есть проблемы:**\n• " + "\n• ".join(probs))
-        e = discord.Embed(title="Канцелярия двора",
-                          description="Выбери участника в списке ниже — откроется его карточка.\n"
-                                      "-# Монеты · уровень · опыт · путь · кольца · сбросы\n\n" + check,
-                          color=discord.Color.from_rgb(150, 30, 40))
-        if f:
-            e.set_image(url="attachment://staff.jpg")
+    e, f = await staff_page(inter.guild_id, участник, inter.guild)
     kw = {"file": f} if f else {}
-    await inter.followup.send(embed=e, view=view, ephemeral=True, **kw)
+    await inter.followup.send(embed=e, view=StaffView(inter.user.id, участник), ephemeral=True, **kw)
 
 
 # ═════════ Роли-разделители: выдаются, только если есть роль из их раздела ═════════

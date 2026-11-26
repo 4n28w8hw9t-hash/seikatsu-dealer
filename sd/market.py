@@ -64,10 +64,16 @@ async def forget_missing(guild: discord.Guild, r: dict) -> bool:
     """Если роль удалили в настройках Discord — убираем её и из бота."""
     if guild.get_role(r["role_id"]):
         return False
-    await bot.db.execute("DELETE FROM role_owners WHERE guild_id=? AND role_ref=?", (guild.id, r["id"]))
-    await bot.db.execute("DELETE FROM custom_roles WHERE guild_id=? AND id=?", (guild.id, r["id"]))
-    await bot.db.commit()
-    return True
+    try:
+        await guild.fetch_role(r["role_id"])
+    except discord.NotFound:
+        async with bot.transaction() as db:
+            await db.execute("DELETE FROM role_owners WHERE guild_id=? AND role_ref=?", (guild.id, r["id"]))
+            await db.execute("DELETE FROM custom_roles WHERE guild_id=? AND id=?", (guild.id, r["id"]))
+        return True
+    except discord.HTTPException as ex:
+        print("Не удалось сверить роль:", guild.id, r["role_id"], repr(ex))
+    return False
 
 
 NO_RIGHTS = ("Не получилось: боту нужно право «Управлять ролями», "
@@ -377,6 +383,15 @@ async def fix_role_positions():
             print("Роли игроков не передвинуты:", repr(ex))
 
 
+async def discard_new_role(role: discord.Role):
+    try:
+        await role.delete(reason="Отмена создания роли")
+    except discord.NotFound:
+        pass
+    except discord.HTTPException as ex:
+        print("Временную роль надо удалить:", role.id, repr(ex))
+
+
 async def create_role(inter: discord.Interaction, name: str, color_raw: str):
     g = inter.guild
     uid = inter.user.id
@@ -402,18 +417,28 @@ async def create_role(inter: discord.Interaction, name: str, color_raw: str):
                                    reason=f"Роль игрока {inter.user}")
     except discord.HTTPException:
         return await reply(inter, NO_RIGHTS)
-    await place_role(g, role)
     try:
         await inter.user.add_roles(role, reason="Создатель роли")
-    except discord.HTTPException:
-        pass
-    await bot.add(g.id, uid, -ROLE_CREATE_PRICE, reason="role_create", detail=discord.utils.escape_markdown(name))
-    cur = await bot.db.execute(
-        "INSERT INTO custom_roles(guild_id,owner_id,role_id,name,color,price,created) "
-        "VALUES(?,?,?,?,?,NULL,?)", (g.id, uid, role.id, name, color, int(time.time())))
-    await bot.db.execute("INSERT INTO role_owners(guild_id,role_ref,user_id,worn) VALUES(?,?,?,1)",
-                         (g.id, cur.lastrowid, uid))
-    await bot.db.commit()
+        async with bot.transaction() as db:
+            debit = await db.execute(
+                "UPDATE users SET balance=balance-? WHERE guild_id=? AND user_id=? AND balance>=?",
+                (ROLE_CREATE_PRICE, g.id, uid, ROLE_CREATE_PRICE))
+            if debit.rowcount == 1:
+                cur = await db.execute(
+                    "INSERT INTO custom_roles(guild_id,owner_id,role_id,name,color,price,created) "
+                    "VALUES(?,?,?,?,?,NULL,?)", (g.id, uid, role.id, name, color, int(time.time())))
+                await db.execute("INSERT INTO role_owners(guild_id,role_ref,user_id,worn) VALUES(?,?,?,1)",
+                                 (g.id, cur.lastrowid, uid))
+                await ledger_record(db, g.id, uid, -ROLE_CREATE_PRICE, "role_create",
+                                    discord.utils.escape_markdown(name))
+    except Exception as ex:
+        print("Создание роли отменено:", g.id, role.id, repr(ex))
+        await discard_new_role(role)
+        return await reply(inter, "Роль не оформлена. Монеты не списаны.", rows=[["roles", "market"]])
+    if debit.rowcount != 1:
+        await discard_new_role(role)
+        return await reply(inter, "Для создания роли не хватает монет.", rows=[["daily", "market"]])
+    await place_role(g, role)
     e = embed(f"✨ Роль создана: {name}", f"Списано **{fmt(ROLE_CREATE_PRICE)}**. Роль уже на тебе.\n"
               "Чтобы продавать её, открой «Мои роли» и выбери её.", discord.Colour(color))
     await send_card(inter, e, "shop", rows=[["roles", "market"]])
@@ -438,29 +463,7 @@ class CreateRoleModal(discord.ui.Modal, title="Новая роль"):
 # ═════════ Мои роли ═════════
 @bot.tree.command(name="роли", description="Твои роли: надеть, снять, выставить на продажу")
 async def my_roles(inter: discord.Interaction):
-    roles = await owned_roles(inter.guild_id, inter.user.id)
-    roles = [r for r in roles if not await forget_missing(inter.guild, r)]
-    mine = [r for r in roles if r["owner_id"] == inter.user.id]
-    lines = []
-    for r in roles:
-        tags = []
-        if r["owner_id"] == inter.user.id:
-            tags.append("⭐ твоя")
-            tags.append(f"в продаже за {r['price']}" if r["price"] is not None else "не продаётся")
-            tags.append(f"продаж: {r['sold']}, заработано: {r['earned']}")
-        tags.append("надета" if r["worn"] else "снята")
-        lines.append(f"<@&{r['role_id']}> — " + " · ".join(tags))
-    text = "\n".join(lines) if lines else "У тебя пока нет ролей."
-    e = embed("🎭 Мои роли", text + f"\n\nСоздано: **{len(mine)}/{ROLE_LIMIT}**")
-    rows = []
-    if roles:
-        rows.append([discord.ui.Select(
-            custom_id="sd:mk:mine", placeholder="Выбери роль",
-            options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
-                                          emoji=icon_emoji("⭐") if r["owner_id"] == inter.user.id else None)
-                     for r in roles[:25]])])
-    rows.append(["rolecreate", "market"])
-    await send_card(inter, e, "inv", rows=rows, allowed_mentions=discord.AllowedMentions.none())
+    await inventory_roles(inter)
 
 
 ROLE_FILTERS = {"all": "Все роли", "worn": "Надеты", "mine": "Мои", "bought": "Куплены"}
@@ -700,14 +703,18 @@ async def delete_role(guild: discord.Guild, ref: int) -> bool:
     r = await get_role(guild.id, ref)
     if not r:
         return False
-    role = guild.get_role(r["role_id"])
-    if role:
-        try:
-            await role.delete(reason="Удалена админом")
-        except discord.HTTPException:
-            pass
-    await bot.db.execute("DELETE FROM role_owners WHERE guild_id=? AND role_ref=?", (guild.id, ref))
-    await bot.db.execute("DELETE FROM custom_roles WHERE guild_id=? AND id=?", (guild.id, ref))
-    await bot.db.commit()
+    try:
+        role = guild.get_role(r["role_id"])
+        if role is None:
+            role = await guild.fetch_role(r["role_id"])
+        await role.delete(reason="Удалена админом")
+    except discord.NotFound:
+        pass
+    except discord.HTTPException as ex:
+        print("Удаление роли не подтверждено Discord:", guild.id, ref, repr(ex))
+        return False
+    async with bot.transaction() as db:
+        await db.execute("DELETE FROM role_owners WHERE guild_id=? AND role_ref=?", (guild.id, ref))
+        await db.execute("DELETE FROM custom_roles WHERE guild_id=? AND id=?", (guild.id, ref))
     return True
 

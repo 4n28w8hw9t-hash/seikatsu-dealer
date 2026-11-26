@@ -564,6 +564,10 @@ class EconomyBot(commands.Bot):
             )
         """)
         await self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS pending_love_rooms (
+                guild_id INTEGER NOT NULL, name TEXT NOT NULL, created INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,name)
+            );
             CREATE TABLE IF NOT EXISTS coin_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL, amount INTEGER NOT NULL, kind TEXT NOT NULL,
@@ -708,6 +712,18 @@ class EconomyBot(commands.Bot):
             kind = "duel" if duel else "transfer"
             await record(db, guild_id, sender, -amount, kind, f"<@{recipient}>")
             await record(db, guild_id, recipient, amount, kind, f"<@{sender}>")
+        return True
+
+    async def adjust_staff_balance(self, guild_id: int, user_id: int, delta: int) -> bool:
+        from .ledger import record
+        async with self.transaction() as db:
+            await self.ensure_user(db, guild_id, user_id)
+            changed = await db.execute(
+                "UPDATE users SET balance=balance+? WHERE guild_id=? AND user_id=? AND (? > 0 OR balance+?>=0)",
+                (delta, guild_id, user_id, delta, delta))
+            if changed.rowcount != 1:
+                return False
+            await record(db, guild_id, user_id, delta, "admin")
         return True
 
     async def add(self, guild_id: int, user_id: int, amount: int, field: str = "balance",

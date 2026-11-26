@@ -1,6 +1,7 @@
 """Браки: кольца, предложение, парный профиль, опыт пары, лав-рума, развод."""
 import asyncio
 import time
+from uuid import uuid4
 
 import discord
 from discord import app_commands
@@ -25,6 +26,7 @@ def ring_emo(key: str) -> str:
 
 RING_SHORT = {"silver": "Серебро", "gold": "Золото", "ruby": "Рубин"}
 ROOM_CATEGORY_ID = 1575480244687609926
+PENDING_ROOM_PREFIX = "seikatsu-pending-"
 ROOM_EMPTY_GRACE = 120   # пустая рума удаляется через 2 минуты
 ROOM_RENAME_PRICE = 1000  # своё название лав-румы
 ROOM_NAME_MAX = 40
@@ -498,7 +500,15 @@ async def love_room(inter: discord.Interaction):
     if not mar:
         return await reply(inter, "Лав-рума есть только у пар", rows=[["rings"]])
     ch = g.get_channel(mar["room_id"]) if mar["room_id"] else None
-    if ch:
+    if ch is None and mar["room_id"]:
+        try:
+            ch = await g.fetch_channel(mar["room_id"])
+        except discord.NotFound:
+            pass
+        except discord.HTTPException:
+            return await reply(inter, "Discord не подтвердил состояние лав-румы. Попробуй позже.",
+                               rows=[["couple"]])
+    if isinstance(ch, discord.VoiceChannel):
         return await reply(inter, f"💞 Ваша лав-рума уже открыта: {ch.mention}", rows=[["couple"]])
     me = g.me
     try:
@@ -517,14 +527,25 @@ async def love_room(inter: discord.Interaction):
                 me: discord.PermissionOverwrite(view_channel=True, connect=True,
                                                 manage_channels=True, move_members=True),
                 discord.Object(id=mar["a"]): lovers, discord.Object(id=mar["b"]): lovers}
-        ch = await g.create_voice_channel(await room_title(g, mar), category=cat,
-                                          overwrites=over, user_limit=2,
+        pending_name = PENDING_ROOM_PREFIX + uuid4().hex
+        async with bot.transaction() as db:
+            await db.execute("INSERT INTO pending_love_rooms(guild_id,name,created) VALUES(?,?,?)",
+                             (g.id, pending_name, int(time.time())))
+        ch = await g.create_voice_channel(pending_name, category=cat, overwrites=over, user_limit=2,
                                           reason="Лав-рума пары")
     except discord.Forbidden:
         return await reply(inter, "У бота нет права «Управлять каналами» — попроси админа его выдать")
-    await bot.db.execute("UPDATE marriages SET room_id=?, room_created=? WHERE guild_id=? AND a=?",
-                         (ch.id, int(time.time()), g.id, mar["a"]))
-    await bot.db.commit()
+    async with bot.transaction() as db:
+        updated = await db.execute(
+            "UPDATE marriages SET room_id=?, room_created=? WHERE guild_id=? AND a=? AND b=? AND since=? "
+            "AND room_id IS ?",
+            (ch.id, int(time.time()), g.id, mar["a"], mar["b"], mar["since"], mar["room_id"]))
+        if updated.rowcount == 1:
+            await db.execute("DELETE FROM pending_love_rooms WHERE guild_id=? AND name=?", (g.id, pending_name))
+    if updated.rowcount != 1:
+        return await reply(inter, "Пара или её рума изменились. Открой парный профиль ещё раз.",
+                           rows=[["couple"]])
+    await name_open_room(ch, g, mar)
     if not ch.voice_states:
         room_empty_since[ch.id] = time.monotonic()
     await reply(inter, embed=embed(
@@ -532,6 +553,13 @@ async def love_room(inter: discord.Interaction):
         f"Своё название — `/название_румы` ({fmt(ROOM_RENAME_PRICE)}).\n"
         "Когда рума опустеет, она сама закроется через пару минут."), rows=[["couple", "roomname"]],
         key="marry")
+
+
+async def name_open_room(channel, guild, marriage):
+    try:
+        await channel.edit(name=await room_title(guild, marriage), reason="Название лав-румы")
+    except discord.HTTPException as ex:
+        print("Название лав-румы будет обновлено позже:", channel.id, repr(ex))
 
 
 async def room_title(g: discord.Guild, mar: dict) -> str:
@@ -595,6 +623,40 @@ async def track_empty_love_room(member, before, after):
             room_empty_since[ch.id] = time.monotonic()
 
 
+async def clean_pending_rooms():
+    async with ECON_LOCK:
+        async with bot.db.execute("SELECT guild_id,name FROM pending_love_rooms WHERE created<=?",
+                                  (int(time.time()) - ROOM_EMPTY_GRACE,)) as cur:
+            pending = await cur.fetchall()
+        for guild_id in {guild_id for guild_id, _ in pending}:
+            guild = bot.get_guild(guild_id)
+            if guild is None or guild.unavailable:
+                continue
+            try:
+                channels = {ch.name: ch for ch in await guild.fetch_channels()
+                            if isinstance(ch, discord.VoiceChannel) and ch.category_id == ROOM_CATEGORY_ID}
+            except discord.HTTPException as ex:
+                print("Не удалось сверить временные лав-румы:", guild_id, repr(ex))
+                continue
+            for gid, name in pending:
+                if gid != guild_id:
+                    continue
+                channel = channels.get(name)
+                if channel:
+                    cached = guild.get_channel(channel.id) or channel
+                    if cached.voice_states:
+                        continue
+                    try:
+                        await channel.delete(reason="Незавершённое создание лав-румы")
+                    except discord.NotFound:
+                        pass
+                    except discord.HTTPException as ex:
+                        print("Временная лав-рума ожидает удаления:", channel.id, repr(ex))
+                        continue
+                async with bot.transaction() as db:
+                    await db.execute("DELETE FROM pending_love_rooms WHERE guild_id=? AND name=?", (gid, name))
+
+
 async def clean_rooms():
     """Закрывает лав-руму после двух полных минут без участников."""
     cur = await bot.db.execute("SELECT guild_id,a,room_id FROM marriages WHERE room_id IS NOT NULL")
@@ -608,7 +670,18 @@ async def clean_rooms():
         if guild is None or guild.unavailable:
             continue
         ch = guild.get_channel(room_id)
+        if ch is None:
+            try:
+                ch = await guild.fetch_channel(room_id)
+            except discord.NotFound:
+                pass
+            except discord.HTTPException:
+                continue
         if isinstance(ch, discord.VoiceChannel):
+            if ch.name.startswith(PENDING_ROOM_PREFIX):
+                mar = await get_marriage(gid, a)
+                if mar and mar["room_id"] == room_id:
+                    await name_open_room(ch, guild, mar)
             if ch.voice_states:
                 room_empty_since.pop(room_id, None)
                 continue
@@ -680,14 +753,22 @@ async def clean_retired_rooms():
             print("Лав-рума ожидает удаления:", guild_id, room_id, repr(ex))
 
 
-async def dissolve(guild: discord.Guild, mar: dict):
+async def retire_marriage(db, guild_id, mar):
+    if mar["room_id"]:
+        await db.execute("INSERT OR IGNORE INTO room_cleanup(guild_id,room_id) VALUES(?,?)",
+                         (guild_id, mar["room_id"]))
+    await db.execute("DELETE FROM marriages WHERE guild_id=? AND a=? AND b=? AND since=?",
+                     (guild_id, mar["a"], mar["b"], mar["since"]))
+
+
+async def finish_dissolve(guild, mar):
     room_id = mar["room_id"]
-    async with bot.transaction() as db:
-        if room_id:
-            await db.execute("INSERT OR IGNORE INTO room_cleanup(guild_id,room_id) VALUES(?,?)",
-                             (guild.id, room_id))
-        await db.execute("DELETE FROM marriages WHERE guild_id=? AND a=?", (guild.id, mar["a"]))
     await set_couple_role(guild.id, (mar["a"], mar["b"]), False)
     if room_id and not await delete_retired_room(guild, room_id):
         print("Лав-рума поставлена в очередь удаления:", guild.id, room_id)
 
+
+async def dissolve(guild: discord.Guild, mar: dict):
+    async with bot.transaction() as db:
+        await retire_marriage(db, guild.id, mar)
+    await finish_dissolve(guild, mar)
