@@ -125,10 +125,10 @@ BUTTONS = {
     "coin": ("Монетка", "🪙", "flip", _R),
     "couple": ("Пара", "💞", "couple", _B),
     "rings": ("Магазин колец", "🛒", "ring_shop", _G),
-    "ringbook": ("Коллекция колец", "💍", "ring", _B),
+    "ringbook": ("Коллекция колец", "💍", "ring_collection", _B),
     "ringbook:action": ("Действие с кольцом", "💍", "ring", _B),
     "ringbook:giftselect": ("Выбор кольца для подарка", "🎁", "gift", _B),
-    "ringgift": ("Подарить кольцо", "🎁", "gift", _B),
+    "ringgift": ("Подарить кольцо", "🎁", "ring_gift", _B),
     "loveroom": ("Лав-рума", "🕯️", "loveroom", _B),
     "divorce": ("Развод", "💔", "divorce", _G),
     "divorce:yes": ("Да, развестись", "💔", "divorce", _R),
@@ -146,9 +146,9 @@ BUTTONS = {
     "inv:rings": ("Кольца", "💍", "ring", _B),
     "quests": ("Поручения", "📜", "quest_book", _B),
     "quests:claim": ("Забрать награду", "🎁", "gift", _OK),
-    "anniversary": ("Годовщина", "🏅", "top", _B),
+    "anniversary": ("Годовщина", "🏅", "anniversary", _B),
     "anniversary:celebrate": ("Отпраздновать", "🎉", "win", _OK),
-    "rolecreate": ("Создать роль", "✨", "skill", _OK),
+    "rolecreate": ("Создать роль", "✨", "role_create", _OK),
     "help": ("Помощь", "❓", "help", _G),
     "roomname": ("Название румы", "🏷️", "tag", _G),
     "duel": ("Дуэль", "⚔️", "duel", _G),
@@ -208,6 +208,8 @@ def icon_emoji(u: str):
 BUTTON_ICON_FALLBACKS = {
     "ring_shop": "shop", "quest_book": "help", "history": "adm_log",
     "pair_quest": "quest_book", "season_top": "top_lvl", "showcase": "top",
+    "ring_collection": "ring", "ring_gift": "gift",
+    "anniversary": "top", "role_create": "skill",
 }
 
 

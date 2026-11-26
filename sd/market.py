@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 
 import art
-from .core import ECON_LOCK, _B, _G, bot, btn, icon_emoji, embed, fmt, member_name, reply, send_card
+from .core import ECON_LOCK, _B, _G, bot, btn, button_icon, icon_emoji, embed, fmt, member_name, reply, send_card
 
 from .ledger import record as ledger_record, role_status
 
@@ -177,7 +177,9 @@ async def show_market(inter: discord.Interaction, state: MarketView | None = Non
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
                                           description=f"{r['price']} монет · продаж: {r['sold']}"[:100])
                      for r in rows])])
-    actions = [discord.ui.Button(label="Поиск", custom_id=f"sd:mk:search:{state.token()}", style=_B)]
+    search_icon = discord.PartialEmoji.from_str(button_icon("role_search") or "🔎")
+    actions = [discord.ui.Button(label="Поиск", emoji=search_icon,
+                                 custom_id=f"sd:mk:search:{state.token()}", style=_B)]
     if state.query:
         actions.append(discord.ui.Button(label="Сбросить поиск",
                          custom_id=f"sd:mk:list:{MarketView(sort=state.sort).token()}", style=_G))

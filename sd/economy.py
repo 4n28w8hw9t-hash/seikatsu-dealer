@@ -7,7 +7,7 @@ from discord import app_commands
 
 import art
 from .core import DAILY_REWARD, bot, btn, embed, fmt, fmt_time, iconize, member_name, reply, send_card
-from .core import send_panel, send_result, _OK, _G
+from .core import E, send_panel, send_result, _OK, _G
 from .achievements import ACHIEVEMENTS, get_stats, unlock
 from .levels import PATHS, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, title_banner, work_pay, xp_for
 from .top import _ranked
@@ -99,13 +99,14 @@ async def transfer(inter: discord.Interaction, участник: discord.Member,
     if not await bot.move_coins(g, uid, m.id, сумма):
         return await reply(inter, "Не хватает монет для перевода", rows=[["balance", "daily"]])
     left = (await bot.get_user(g, uid))["balance"]
-    await send_result(inter, "balance", "💰 Перевод отправлен",
+    transfer_icon = E("sd_transfer", "💰")
+    await send_result(inter, "balance", f"{transfer_icon} Перевод отправлен",
                       f"{m.display_name} получает {fmt(сумма)}",
                       f"Осталось у тебя: {left:,}".replace(",", " "), rows=[["balance"]])
     # получатель узнаёт о переводе в канале
     try:
         await inter.channel.send(
-            iconize(f"💰 {inter.user.mention} переводит {m.mention} **{fmt(сумма)}**"),
+            iconize(f"{transfer_icon} {inter.user.mention} переводит {m.mention} **{fmt(сумма)}**"),
             allowed_mentions=discord.AllowedMentions(users=[m]))
     except Exception as ex:
         print("Не удалось объявить перевод:", repr(ex))
