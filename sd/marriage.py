@@ -169,7 +169,10 @@ async def ring_action(inter: discord.Interaction, action: str):
             "ON CONFLICT(guild_id,user_id,ring) DO UPDATE SET qty=qty+1", (g, recipient, key))
         await bot.db.commit()
         target = await member_name(inter.guild, recipient)
-        return await show_ring_collection(inter, mar, f"{ring_emo(key)} Ты подарил(а) кольцо «{name}» участнику **{target}**.")
+        receiver_count = (await get_rings(g, recipient)).get(key, 0)
+        return await show_ring_collection(
+            inter, mar, f"{ring_emo(key)} Ты подарил(а) кольцо «{name}» участнику **{target}**. "
+            f"Теперь у него/неё в запасе: **{receiver_count}**.")
     if owned.get(key, 0) <= 0 and mar["ring"] != key:
         return await show_ring_collection(inter, mar, f"У тебя нет кольца «{name}», чтобы выбрать его.")
     await bot.db.execute("UPDATE marriages SET ring=? WHERE guild_id=? AND a=?", (key, g, mar["a"]))
