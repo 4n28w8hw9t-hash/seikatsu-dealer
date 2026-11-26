@@ -2,6 +2,7 @@
 import discord
 from discord import app_commands
 
+from .chronicle import move_old_chronicle
 from .core import V2, bot, build_classic, build_page, fmt, reply
 from .market import delete_role
 from .marriage import dissolve, get_marriage
@@ -70,6 +71,16 @@ async def a_panel(inter: discord.Interaction):
     except discord.HTTPException:
         return await reply(inter, "Не могу написать в этот канал — у бота нет прав", key=None, nav=False)
     await reply(inter, "✅ Панель поставлена. Закрепи сообщение, чтобы оно не уезжало.", key=None, nav=False)
+
+
+@admin.command(name="перенести_летопись", description="Перенести записи в Журнал и удалить старую Летопись")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(подтвердить="Подтвердить удаление Летописи после копирования записей")
+async def a_move_chronicle(inter: discord.Interaction, подтвердить: bool):
+    if not подтвердить:
+        return await inter.followup.send("Для переноса укажи «Да».", ephemeral=True)
+    result = await move_old_chronicle(inter.guild)
+    await inter.followup.send(result, ephemeral=True)
 
 
 bot.tree.add_command(admin)

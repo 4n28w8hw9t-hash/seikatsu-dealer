@@ -9,6 +9,9 @@ import discord
 
 from .core import bot
 
+SEIKATSU_GUILD_ID = 1365111872155684986
+SEIKATSU_JOURNAL_ID = 1574878922162704546
+OLD_CHRONICLE_ID = 1574880613113270433
 RULES_CHANNEL = 1370852188611416064
 MEMBER_ROLE = 1365250956710772756
 STAFF_ROLES = (1365248221269463060, 1574154563051720795)
@@ -72,6 +75,12 @@ def _staff_ow(guild, me):
 
 async def ensure_channels(guild: discord.Guild):
     """Категория «✦ ХРОНИКИ ✦»: летопись и журнал — обычные чаты, видны только администрации."""
+    if guild.id == SEIKATSU_GUILD_ID:
+        log = guild.get_channel(SEIKATSU_JOURNAL_ID)
+        if not isinstance(log, discord.TextChannel):
+            print(f"Журнал стражи {SEIKATSU_JOURNAL_ID} не найден")
+            return None, None
+        return log, log
     me = guild.me
     if not me.guild_permissions.manage_channels:
         return None, None
@@ -109,7 +118,8 @@ async def journal(guild: discord.Guild | None, text: str, color=None):
     if not guild:
         return
     try:
-        ch = guild.get_channel(await _meta(f"journal_{guild.id}") or 0)
+        channel_id = SEIKATSU_JOURNAL_ID if guild.id == SEIKATSU_GUILD_ID else await _meta(f"journal_{guild.id}")
+        ch = guild.get_channel(channel_id or 0)
         if isinstance(ch, discord.TextChannel):
             e = discord.Embed(description=text, color=color or discord.Color.from_rgb(90, 70, 50))
             e.set_footer(text=time.strftime("%d.%m %H:%M"))
@@ -132,7 +142,8 @@ async def chronicle(guild: discord.Guild | None, tag: str, title: str, text: str
     if not guild:
         return
     try:
-        ch = guild.get_channel(await _meta(f"letopis_{guild.id}") or 0)
+        channel_id = SEIKATSU_JOURNAL_ID if guild.id == SEIKATSU_GUILD_ID else await _meta(f"letopis_{guild.id}")
+        ch = guild.get_channel(channel_id or 0)
         if not isinstance(ch, discord.TextChannel):
             return
         emoji = dict(TAGS).get(tag, "📜")
@@ -149,6 +160,72 @@ def clog(guild, tag, title, text, banner=None):
         asyncio.get_running_loop().create_task(chronicle(guild, tag, title, text, banner))
     except RuntimeError:
         pass
+
+
+async def move_old_chronicle(guild: discord.Guild) -> str:
+    """Переносит записи Seikatsu и удаляет старый канал после успешного копирования."""
+    old = guild.get_channel(OLD_CHRONICLE_ID)
+    dest = guild.get_channel(SEIKATSU_JOURNAL_ID)
+    if guild.id != SEIKATSU_GUILD_ID or not isinstance(dest, discord.TextChannel):
+        return "Журнал стражи не найден."
+    if old is None:
+        return "Старая Летопись уже отсутствует. Новые записи идут в Журнал."
+    if not isinstance(old, discord.TextChannel):
+        return "Старая Летопись имеет неожиданный тип канала. Удаление отменено."
+
+    me = guild.me
+    source_perms = old.permissions_for(me)
+    dest_perms = dest.permissions_for(me)
+    if not (source_perms.view_channel and source_perms.read_message_history
+            and source_perms.manage_channels and dest_perms.view_channel
+            and dest_perms.read_message_history and dest_perms.send_messages and dest_perms.embed_links):
+        return "Боту нужны права на чтение обоих каналов, запись в Журнал и удаление Летописи."
+
+    def reader_overwrites(channel):
+        return {target.id: (overwrite.view_channel, overwrite.read_message_history)
+                for target, overwrite in channel.overwrites.items()
+                if target.id != me.id and (overwrite.view_channel is not None
+                                           or overwrite.read_message_history is not None)}
+
+    if (dest.permissions_for(guild.default_role).view_channel
+            or reader_overwrites(old) != reader_overwrites(dest)):
+        return "Права чтения Летописи и Журнала различаются. Перенос отменён."
+
+    try:
+        public_archive = old.archived_threads(limit=1)
+        private_archive = old.archived_threads(limit=1, private=True, joined=not source_perms.manage_threads)
+        if (old.threads or await anext(public_archive, None) is not None
+                or await anext(private_archive, None) is not None):
+            return "В Летописи есть ветки. Перенос и удаление отменены."
+        entries = [msg async for msg in old.history(limit=None, oldest_first=True)]
+        if any(msg.author.id != me.id or msg.content or len(msg.embeds) != 1
+               or msg.attachments or msg.components for msg in entries):
+            return "В Летописи есть сообщения, отличные от записей бота. Перенос и удаление отменены."
+
+        if entries:
+            marker = re.compile(r" · Летопись #(\d+)$")
+            copied = set()
+            async for msg in dest.history(limit=None, after=entries[0].created_at):
+                if msg.author.id == me.id and len(msg.embeds) == 1:
+                    match = marker.search(msg.embeds[0].footer.text or "")
+                    if match:
+                        copied.add(int(match.group(1)))
+            for msg in entries:
+                if msg.id in copied:
+                    continue
+                entry = msg.embeds[0].copy()
+                footer = entry.footer.text or "Архив"
+                entry.set_footer(text=f"{footer} · Летопись #{msg.id}")
+                entry.timestamp = msg.created_at
+                await dest.send(embed=entry, allowed_mentions=discord.AllowedMentions.none())
+        after = entries[-1] if entries else None
+        if await anext(old.history(limit=1, after=after), None) is not None:
+            return "В Летописи появились новые записи. Повтори команду, чтобы перенести их."
+        await old.delete(reason="Записи Летописи перенесены в Журнал стражи")
+    except discord.HTTPException as ex:
+        print("Перенос Летописи:", repr(ex))
+        return "Discord прервал перенос или удаление. Команду можно повторить."
+    return f"Летопись удалена. Записей Летописи в Журнале: {len(entries)}."
 
 
 # ───────── проверка прав ─────────
