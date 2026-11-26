@@ -555,7 +555,7 @@ async def inventory_rings(inter: discord.Interaction):
         text = f"**Личный запас:** {total}\n" + "\n".join(lines)
         text += "\n\nКоллекция пары появится после свадьбы."
         rows.append(["rings"])
-    await send_card(inter, embed("🎒 Инвентарь · Кольца", text), "shop", rows=rows)
+    await send_card(inter, embed("🎒 Инвентарь · Кольца", text), "inventory_rings", rows=rows)
 
 
 def inventory_view(parts):
