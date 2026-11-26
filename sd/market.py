@@ -285,7 +285,7 @@ async def inventory(inter: discord.Interaction):
         lines.append((f"ring_{key}", f"{name} · в запасе: {count}{suffix}"))
     rows = [["roles", "rings", "couple"]]
     await send_panel(
-        inter, "shop", f"Инвентарь · {inter.user.display_name}",
+        inter, "inv", f"Инвентарь · {inter.user.display_name}",
         subtitle="Твои роли и кольца", icon="inv",
         tiles=[("inv", "Роли", str(len(roles)), f"надето: {worn_roles}", False),
                ("ring", "Всего колец", str(total_rings),
