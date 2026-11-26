@@ -1,11 +1,15 @@
 """Рынок ролей: игроки создают свои роли, выставляют их на продажу и получают процент."""
+import asyncio
+import os
 import re
 import time
 
 import discord
 from discord import app_commands
 
-from .core import bot, icon_emoji, embed, fmt, member_name, reply, send_card
+import art
+from .core import bot, icon_emoji, embed, fmt, member_name, reply, send_card, send_panel
+from .levels import is_female
 
 ROLE_CREATE_PRICE = 10_000   # создание роли
 ROLE_LIMIT = 3               # сколько ролей может создать один человек
@@ -279,10 +283,13 @@ async def inventory(inter: discord.Interaction):
     total_rings = total_stock + int(active in RINGS)
     current_name = RINGS[active][0] if active in RINGS else "нет"
     rows = [["roles", "rings", "couple"]]
+    keeper = "inventory_keeper_f.png" if is_female(inter.user) else "inventory_keeper_m.png"
+    keeper_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chars", keeper)
+    keeper_avatar = await asyncio.to_thread(art.thumb, keeper_path)
     await send_panel(
-        inter, "inv", f"Инвентарь · {inter.user.display_name}",
-        subtitle="Твои роли и кольца", icon="inv",
-        tiles=[("inv", "Роли", str(len(roles)), f"надето: {worn_roles}", False),
+        inter, "inventory", f"Инвентарь · {inter.user.display_name}",
+        subtitle="Твои роли и кольца", icon="inventory_chest", avatar=keeper_avatar,
+        tiles=[("inventory_roles", "Роли", str(len(roles)), f"надето: {worn_roles}", False),
                ("ring", "Всего колец", str(total_rings),
                 f"в запасе: {total_stock} · в профиле: {current_name}", False)],
         rows=rows)
