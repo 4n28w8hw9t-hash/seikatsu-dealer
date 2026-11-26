@@ -47,11 +47,15 @@ async def close_seasons():
         guild = bot.get_guild(guild_id)
         if not guild or guild.unavailable or not guild.chunked:
             continue
-        winners = (await ranked(guild, past))[:3]
+        results = await ranked(guild, past)
+        winners = results[:3]
         async with bot.transaction() as db:
             changed = await db.execute("INSERT OR IGNORE INTO season_closed(guild_id,month) VALUES(?,?)",
                                        (guild_id, past))
             if changed.rowcount == 1:
+                await db.executemany(
+                    "INSERT INTO season_results(guild_id,month,user_id,place,xp) VALUES(?,?,?,?,?)",
+                    [(guild_id, past, uid, place, xp) for place, (uid, xp) in enumerate(results, start=1)])
                 await db.executemany(
                     "INSERT INTO season_awards(guild_id,month,user_id,place) VALUES(?,?,?,?)",
                     [(guild_id, past, uid, place) for place, (uid, _) in enumerate(winners, start=1)])

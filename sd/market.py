@@ -207,7 +207,8 @@ async def show_for_sale(inter: discord.Interaction, ref: int, state: MarketView 
         return await reply(inter, "Эта роль уже не продаётся", rows=[[back]])
     owner = await member_name(inter.guild, r["owner_id"])
     e = embed(f"🎭 {r['name']}", f"Цвет: **{color_of(r)}**\nСоздатель: **{owner}**\n"
-              f"Продаж: **{r['sold']}**\nЦена: **{fmt(r['price'])}**",
+              f"Продаж: **{r['sold']}**\nЦена: **{fmt(r['price'])}**\n"
+              f"Продавец получит: **{fmt(int(r['price'] * SELLER_SHARE))}**",
               discord.Colour(r["color"]))
     buy = discord.ui.Button(label=f"Купить за {r['price']}", emoji=icon_emoji("🛍️"),
                             style=discord.ButtonStyle.success, custom_id=f"sd:mk:buy:{ref}:{state.token()}")

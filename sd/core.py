@@ -145,6 +145,11 @@ BUTTONS = {
     "showcase": ("Витрина", "🏅", "showcase", _B),
     "inv:rings": ("Кольца", "💍", "ring", _B),
     "quests": ("Поручения", "📜", "quest_book", _B),
+    "quests:reminder": ("Напоминание", "🔔", "hourglass", _G),
+    "onboarding": ("Первый день", "📜", "quest_book", _B),
+    "event": ("Событие двора", "🏆", "trophy", _B),
+    "event:claim": ("Взять памятный знак", "🏅", "top", _OK),
+    "season:archive": ("Архив сезонов", "📖", "history", _G),
     "quests:claim": ("Забрать награду", "🎁", "quest_reward_claim", _OK),
     "anniversary": ("Годовщина", "🏅", "anniversary", _B),
     "anniversary:celebrate": ("Отпраздновать", "🎉", "win", _OK),
@@ -468,6 +473,8 @@ class EconomyBot(commands.Bot):
         self.msg_cd: dict[tuple[int, int], float] = {}
 
     async def setup_hook(self):
+        from .backups import save_backup
+        await save_backup(DB_PATH)
         self.db = await aiosqlite.connect(DB_PATH)
         await self.db.create_function("casefold", 1, str.casefold, deterministic=True)
         await self.db.execute("PRAGMA journal_mode=WAL")
@@ -564,6 +571,23 @@ class EconomyBot(commands.Bot):
             )
         """)
         await self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS onboarding (
+                guild_id INTEGER, user_id INTEGER, joined INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0,
+                awarded INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(guild_id,user_id)
+            );
+            CREATE TABLE IF NOT EXISTS quest_reminders (
+                guild_id INTEGER, user_id INTEGER, enabled INTEGER NOT NULL, last_week TEXT,
+                PRIMARY KEY(guild_id,user_id)
+            );
+            CREATE TABLE IF NOT EXISTS court_events (
+                guild_id INTEGER, month TEXT, user_id INTEGER, points INTEGER NOT NULL DEFAULT 0,
+                claimed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(guild_id,month,user_id)
+            );
+            CREATE TABLE IF NOT EXISTS season_results (
+                guild_id INTEGER, month TEXT, user_id INTEGER, place INTEGER NOT NULL, xp INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,month,user_id)
+            );
+            CREATE INDEX IF NOT EXISTS season_results_placement ON season_results(guild_id,month,place);
             CREATE TABLE IF NOT EXISTS moderation_events (
                 interaction_id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 moderator_id INTEGER NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL,

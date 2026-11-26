@@ -126,7 +126,7 @@ import time  # noqa: E402
 
 import art  # noqa: E402
 
-from .core import E, ECON_LOCK  # noqa: E402
+from .core import E, ECON_LOCK, bot_channel  # noqa: E402
 from .levels import PATHS, get_path, get_xp, level_of, rank_of, is_female, xp_for  # noqa: E402
 from .marriage import RINGS, get_rings  # noqa: E402
 
@@ -617,8 +617,12 @@ class _RulesButton(discord.ui.Button):
                     print("member не выдан:", m, repr(ex))
                     return await inter.response.send_message(
                         "🥀 Канцлер не смог открыть двери — напиши страже.", ephemeral=True)
+                from .onboarding import start
+                await start(inter.guild_id, m.id)
+                entry = bot_channel(inter.guild)
+                channel_note = f" Открой /меню в {entry.mention}." if entry else " Открой /меню."
                 return await inter.response.send_message(
-                    "📜 Канцлер вносит твоё имя в книгу двора. Устав принят — двери замка открыты!",
+                    "📜 Устав принят. Твой список «Первый день при дворе» уже доступен." + channel_note,
                     ephemeral=True)
             await inter.response.send_message("📜 Ты уже принял устав — двери двора открыты.", ephemeral=True)
         else:

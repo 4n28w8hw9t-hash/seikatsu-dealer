@@ -122,6 +122,9 @@ async def transfer(inter: discord.Interaction, участник: discord.Member,
 async def profile(inter: discord.Interaction, участник: discord.Member | None = None):
     m = участник or inter.user
     g = inter.guild_id
+    if m.id == inter.user.id:
+        from .onboarding import open_profile
+        await open_profile(g, m.id)
     await unlock(g, m.id)
     s = await get_stats(g, m.id)
     lvl = s["level"]

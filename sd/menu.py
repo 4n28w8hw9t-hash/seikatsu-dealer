@@ -11,7 +11,7 @@ from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
 from .levels import PATHS, RANK_STEP, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, work_pay, xp_for
-from . import ledger, market, marriage, pair_quests, quests, showcase, top
+from . import events, ledger, market, marriage, onboarding, pair_quests, quests, reminders, showcase, top
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
 
@@ -70,6 +70,9 @@ SECTIONS = [
     ("profile", "Профиль", "Твой уровень, титул и место в топе"),
     ("inventory", "Инвентарь", "Твои роли и кольца"),
     ("quests", "Поручения двора", "Еженедельные задания и награда"),
+    ("event", "Событие двора", "Общая цель и памятный знак"),
+    ("onboarding", "Первый день при дворе", "Список для новых участников"),
+    ("season:archive", "Архив сезонов", "Итоги прошлых месяцев"),
     ("history", "История монет", "Личная выписка из Казны"),
     ("path", "Путь и титул", "Знать или Вера, следующее звание"),
     ("top", "Топ двора", "Лучшие по уровню и по монетам"),
@@ -155,8 +158,19 @@ async def dashboard(inter: discord.Interaction):
                  ("Работа" if not path else f"Работа · {short_time(w_left)}"),
                  _OK if (path and w_left <= 0) else _G),
              btn("profile"), btn("inventory"), btn("balance")]
+    week, _ = quests.week_window(now)
+    counts = await quests.progress(bot.db, g, m.id, week)
+    done = quests.completed_count(counts, quests.goals_for_week(week))
+    if done == 3 and not counts[3]:
+        quest_button = btn("quests:claim", "Забрать награду за поручения")
+    else:
+        quest_button = btn("quests", "Поручения · " + ("получено" if counts[3] else f"{done}/3"))
+    shortcuts = [*quick[3:], quest_button, "event"]
+    first_day = await onboarding.status(g, m.id)
+    if first_day and not first_day[1]:
+        shortcuts.append("onboarding")
     await send_panel(inter, "menu", f"Покои · {m.display_name}", subtitle=sub, icon="profile",
-                     bar=bar, tiles=tiles, lines=lines, rows=[quick[:3], [*quick[3:], "quests"], [sections_select()]], nav=False)
+                     bar=bar, tiles=tiles, lines=lines, rows=[quick[:3], shortcuts, [sections_select()]], nav=False)
 
 
 async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
@@ -184,7 +198,7 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await showcase.show(inter)
     elif key == "showcase:save":
         await showcase.save(inter, (inter.data or {}).get("values") or [])
-    elif key == "showcase:toggle":
+    elif key in ("showcase:toggle", "showcase:more"):
         await showcase.save(inter, toggle=side)
     elif key == "showcase:clear":
         await showcase.save(inter, [])
@@ -201,6 +215,16 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await marriage.anniversary(inter, celebrate=milestone is not None, milestone=milestone)
     elif key == "quests":
         await quests.show(inter)
+    elif key == "quests:reminder":
+        await reminders.toggle(inter)
+    elif key == "onboarding":
+        await onboarding.show(inter)
+    elif key == "event":
+        await events.show(inter)
+    elif key == "event:claim":
+        await events.claim(inter)
+    elif key == "season:archive" or key.startswith("season:archive:"):
+        await top.show_archive(inter, key.removeprefix("season:archive").lstrip(":") or side)
     elif key == "quests:claim":
         await quests.claim(inter)
     elif key == "pairquest":
@@ -323,11 +347,11 @@ async def on_interaction(inter: discord.Interaction):
         vals = (inter.data or {}).get("values") or [""]
         key = str(vals[0])
     side = ""
-    if key in ("ringbook:action", "ringbook:giftselect", "inv:filter", "anniversary:pick", "showcase:toggle"):
+    if key in ("ringbook:action", "ringbook:giftselect", "inv:filter", "anniversary:pick", "showcase:toggle", "showcase:more", "season:archive"):
         vals = (inter.data or {}).get("values") or [""]
         side = str(vals[0])
-    if (key not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:toggle", "showcase:clear")
-            and not key.startswith(("mk:", "inv:roles:", "history:"))):
+    if (key not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:toggle", "showcase:more", "showcase:clear")
+            and not key.startswith(("mk:", "inv:roles:", "history:", "season:archive:"))):
         return
     try:
         if await wrong_channel(inter):
@@ -336,7 +360,12 @@ async def on_interaction(inter: discord.Interaction):
             return await inter.response.send_message(
                 "⏳ Не так быстро, подожди пару секунд", ephemeral=True)
         if key == "history" or key.startswith("history:"):
-            cursor = key.partition(":")[2]
+            argument = key.partition(":")[2]
+            category, _, cursor = argument.partition(":")
+            if argument == "filter":
+                category = next(iter((inter.data or {}).get("values") or []), "all")
+            elif category not in ledger.FILTERS:
+                cursor, category = argument, "all"
             if cursor and (not cursor.isascii() or not cursor.isdecimal() or len(cursor) > 18):
                 return await inter.response.send_message("Эта страница истории недоступна.", ephemeral=True)
             if inter.message and inter.message.flags.ephemeral:
@@ -344,7 +373,7 @@ async def on_interaction(inter: discord.Interaction):
                 inter.extras["sd_edit"] = True
             else:
                 await inter.response.defer(ephemeral=True, thinking=True)
-            return await ledger.show(inter, int(cursor) if cursor else None)
+            return await ledger.show(inter, int(cursor) if cursor else None, category)
         if key == "roomname":
             return await inter.response.send_modal(RoomNameModal())
         if key in MENU_MODALS:

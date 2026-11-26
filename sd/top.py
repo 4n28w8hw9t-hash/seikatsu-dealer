@@ -2,7 +2,7 @@
 (banners/top_lvl, banners/top_coin; пока их нет — общий баннер «top»)."""
 import discord
 
-from .core import _B, _G, RED, E, bot, btn, button_icon, send_card
+from .core import _B, _G, RED, E, bot, btn, button_icon, embed, send_card
 from .levels import get_path, is_female, level_of, rank_of
 from .season import month_window, ranked as season_ranked
 
@@ -70,8 +70,53 @@ async def show_top(inter: discord.Interaction, tab: str = "lvl"):
     e = discord.Embed(title=f"{icon} {title}", color=RED,
                       description=f"-# {sub}\n\n" + "\n".join(lines) + f"\n\n{mine}")
     rows = [[btn(f"top:{kind}", style=_B if tab == kind else _G) for kind in TABS]]
+    if tab == "season":
+        rows.append(["season:archive"])
     key = banner if banner in getattr(bot, "banners", {}) else "top"
     await send_card(inter, e, key, rows=rows)
+
+
+def month_label(month):
+    year, number = month.split("-")
+    names = ("Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+             "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь")
+    return f"{names[int(number) - 1]} {year}"
+
+
+async def show_archive(inter, month=""):
+    guild_id = inter.guild_id
+    async with bot.db.execute(
+        "SELECT month FROM season_closed WHERE guild_id=? ORDER BY month DESC LIMIT 25", (guild_id,)
+    ) as cur:
+        months = [value for (value,) in await cur.fetchall()]
+    rows = [["top:season"]]
+    if not months:
+        return await send_card(inter, embed("Архив сезонов", "Первый завершённый сезон появится здесь."),
+                               "top_lvl", rows=rows)
+    month = month if month in months else months[0]
+    async with bot.db.execute(
+        "SELECT user_id,place,xp FROM season_results WHERE guild_id=? AND month=? "
+        "AND (place<=3 OR user_id=?) ORDER BY place", (guild_id, month, inter.user.id),
+    ) as cur:
+        results = {uid: (place, xp) for uid, place, xp in await cur.fetchall()}
+    async with bot.db.execute(
+        "SELECT user_id,place FROM season_awards WHERE guild_id=? AND month=? ORDER BY place", (guild_id, month),
+    ) as cur:
+        awards = await cur.fetchall()
+    lines = [f"**{month_label(month)}**"]
+    for uid, place in awards:
+        detail = f" · {_n(results[uid][1])} опыта" if uid in results else ""
+        medal = E(f"sd_top_{place}", ("🥇", "🥈", "🥉")[place-1])
+        lines.append(f"{medal} <@{uid}>{detail}")
+    if not awards:
+        lines.append("В этом сезоне медали не выдавались.")
+    own = results.get(inter.user.id, (dict(awards).get(inter.user.id), None))[0]
+    lines.append(f"\nТвоё место: **#{own}**" if own else "\nЛичного места в архиве нет.")
+    rows.insert(0, [discord.ui.Select(custom_id="sd:season:archive", placeholder="Выбери месяц", options=[
+        discord.SelectOption(label=month_label(value), value=value, default=value == month) for value in months
+    ])])
+    await send_card(inter, embed("Архив сезонов", "\n".join(lines)), "top_lvl", rows=rows,
+                    allowed_mentions=discord.AllowedMentions.none())
 
 
 def _n(v: int) -> str:

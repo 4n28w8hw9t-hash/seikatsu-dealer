@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord import app_commands
 
-from .core import E, bot, button_icon, embed, fmt, send_card
+from .core import E, bot, btn, button_icon, embed, fmt, send_card
 from .ledger import record as ledger_record
 
 COURT_TZ = timezone(timedelta(hours=3))
@@ -39,6 +39,9 @@ async def record(db, guild_id: int, user_id: int, activity: str, now=None):
         f"INSERT INTO weekly_quests(guild_id,user_id,week,{activity}) VALUES(?,?,?,1) "
         f"ON CONFLICT(guild_id,user_id,week) DO UPDATE SET {activity}={activity}+1",
         (guild_id, user_id, week))
+    if activity in ("work", "daily"):
+        from .events import record_contribution
+        await record_contribution(db, guild_id, user_id, now)
 
 
 async def progress(db, guild_id, user_id, week):
@@ -56,8 +59,12 @@ def goals_for_week(week):
                  for key, title, need, unit in QUESTS)
 
 
+def completed_count(counts, goals):
+    return sum(value >= goal[2] for value, goal in zip(counts, goals))
+
+
 def complete(counts, goals):
-    return all(value >= goal[2] for value, goal in zip(counts, goals))
+    return completed_count(counts, goals) == len(goals)
 
 
 def voice_time(minutes):
@@ -85,7 +92,9 @@ async def show(inter: discord.Interaction, notice=""):
     text = "\n".join([f"Новая неделя <t:{ends}:R>.", "", *lines, "", reward])
     if notice:
         text = notice + "\n\n" + text
-    rows = [["work", "daily"]]
+    from .reminders import enabled
+    remind = await enabled(inter.guild_id, inter.user.id)
+    rows = [["work", "daily", btn("quests:reminder", "Напоминание: " + ("вкл." if remind else "выкл."))]]
     if complete(counts, goals) and not counts[3]:
         rows.insert(0, ["quests:claim"])
     await send_card(inter, embed(f"{button_icon('quest_book') or '📜'} Поручения двора", text), "quests", rows=rows)

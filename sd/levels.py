@@ -204,7 +204,8 @@ async def tick():
     from .market import recover_role_purchases
     from .marriage import clean_pending_rooms, clean_retired_rooms, clean_rooms
     from .season import close_seasons
-    for job in (clean_pending_rooms, clean_rooms, clean_retired_rooms, recover_role_purchases, close_seasons):
+    from .reminders import send_due
+    for job in (clean_pending_rooms, clean_rooms, clean_retired_rooms, recover_role_purchases, close_seasons, send_due):
         try:
             await job()
         except Exception as ex:

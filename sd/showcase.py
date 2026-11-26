@@ -16,6 +16,10 @@ def badge(key):
     if category == "season" and ident in ("1", "2", "3"):
         place = int(ident)
         return SEASON_LABELS[place - 1], f"top_{place}", ("🥇", "🥈", "🥉")[place - 1]
+    if key == "court:first_day":
+        return "Первый день при дворе", "ach_first", "📜"
+    if key == "court:event":
+        return "Общее дело", "trophy", "🏆"
     if key == "pair:weekly":
         return "Союз двора", "pair_medal", "💞"
     raise ValueError(key)
@@ -35,6 +39,14 @@ async def earned(guild_id, uid, *, db=None):
     ) as cur:
         if await cur.fetchone():
             keys.append("pair:weekly")
+    async with db.execute("SELECT 1 FROM onboarding WHERE guild_id=? AND user_id=? AND awarded=1",
+                          (guild_id, uid)) as cur:
+        if await cur.fetchone():
+            keys.append("court:first_day")
+    async with db.execute("SELECT 1 FROM court_events WHERE guild_id=? AND user_id=? AND claimed=1 LIMIT 1",
+                          (guild_id, uid)) as cur:
+        if await cur.fetchone():
+            keys.append("court:event")
     return keys
 
 
@@ -86,7 +98,14 @@ async def show(inter: discord.Interaction, notice=""):
     available = await earned(g, uid)
     selected = await selection(g, uid, available)
     lines = [f"**Значки в профиле · {len(selected)}/{BADGE_LIMIT}**"]
-    lines.extend(f"{badge_emoji(key)} {badge(key)[0]}" for key in selected)
+    from .top import month_label
+    async with bot.db.execute(
+        "SELECT place,MAX(month) FROM season_awards WHERE guild_id=? AND user_id=? GROUP BY place", (g, uid)
+    ) as cur:
+        months = {f"season:{place}": month_label(month) for place, month in await cur.fetchall()}
+    for key in selected:
+        detail = f" · {months[key]}" if key in months else ""
+        lines.append(f"{badge_emoji(key)} {badge(key)[0]}{detail}")
     if not selected:
         lines.append("Витрина пока пуста.")
     if not available:
@@ -98,14 +117,18 @@ async def show(inter: discord.Interaction, notice=""):
         options = [
             discord.SelectOption(
                 label=badge(key)[0], value=key,
-                description="На витрине · убрать" if key in selected else "Добавить на витрину",
+                description=("Убрать" if key in selected else "Добавить")
+                + (f" · {months[key]}" if key in months else " · Витрина"),
                 emoji=discord.PartialEmoji.from_str(badge_emoji(key)),
             )
-            for key in available[:25]
+            for key in available
         ]
         rows.extend(["---", [discord.ui.Select(
-            custom_id="sd:showcase:toggle", placeholder="Добавить или убрать значок", options=options,
+            custom_id="sd:showcase:toggle", placeholder="Добавить или убрать значок", options=options[:25],
         )]])
+        if len(options) > 25:
+            rows.append([discord.ui.Select(custom_id="sd:showcase:more",
+                                           placeholder="Другие значки", options=options[25:])])
     if selected:
         clear_icon = discord.PartialEmoji.from_str(button_icon("cancel") or "✖️")
         rows.append([discord.ui.Button(label="Очистить витрину", emoji=clear_icon, custom_id="sd:showcase:clear")])

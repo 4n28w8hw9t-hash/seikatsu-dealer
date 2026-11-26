@@ -7,6 +7,12 @@ from discord import app_commands
 from .core import bot, button_icon, embed, fmt, send_card
 
 PAGE_SIZE = 8
+FILTERS = {
+    "all": ("Все операции", ""),
+    "income": ("Приход", " AND amount>0"),
+    "expense": ("Расход", " AND amount<0"),
+    "purchases": ("Покупки", " AND kind IN ('role_buy','role_create','ring','room_name')"),
+}
 KINDS = {
     "transfer": "Перевод", "duel": "Дуэль", "flip": "Монетка",
     "daily": "Ежедневная награда", "work": "Жалованье",
@@ -31,7 +37,17 @@ async def role_status(db, guild_id, user_id, role_ref, status):
         "AND kind='role_buy' AND status='pending'", (status, guild_id, user_id, role_ref))
 
 
-async def show(inter: discord.Interaction, before: int | None = None):
+async def show(inter: discord.Interaction, before: int | None = None, category="all"):
+    from .quests import week_window
+    category = category if category in FILTERS else "all"
+    _, ends = week_window()
+    async with bot.db.execute(
+        "SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount END),0), "
+        "COALESCE(-SUM(CASE WHEN amount<0 THEN amount END),0) FROM coin_history "
+        "WHERE guild_id=? AND user_id=? AND created>=? AND created<? AND status<>'pending'",
+        (inter.guild_id, inter.user.id, ends - 7 * 86400, ends),
+    ) as cur:
+        income, expense = await cur.fetchone()
     g, uid = inter.guild_id, inter.user.id
     params = [g, uid]
     cutoff = ""
@@ -40,7 +56,7 @@ async def show(inter: discord.Interaction, before: int | None = None):
         params.append(before)
     async with bot.db.execute(
         "SELECT id,amount,kind,detail,status,created FROM coin_history WHERE guild_id=? AND user_id=?"
-        + cutoff + " ORDER BY id DESC LIMIT ?", (*params, PAGE_SIZE + 1)
+        + FILTERS[category][1] + cutoff + " ORDER BY id DESC LIMIT ?", (*params, PAGE_SIZE + 1)
     ) as cur:
         entries = await cur.fetchall()
     lines = []
@@ -50,15 +66,20 @@ async def show(inter: discord.Interaction, before: int | None = None):
         state = f" · {STATUSES.get(status, status)}" if kind == "role_buy" else ""
         lines.append(f"<t:{created}:d> · **{sign}{fmt(abs(amount))}** · {KINDS.get(kind, kind)}{info}{state}")
     content = "\n".join(lines) if lines else "Пока нет записей за этот период."
-    content += "\n\n-# История ведётся с момента установки обновления."
+    summary = f"**Неделя · +{fmt(income)} / −{fmt(expense)}**"
+    content = summary + "\n\n" + content
+    filters = discord.ui.Select(custom_id="sd:history:filter", placeholder="Фильтр операций", options=[
+        discord.SelectOption(label=label, value=key, default=key == category)
+        for key, (label, _) in FILTERS.items()
+    ])
     buttons = []
     if before is not None:
-        buttons.append(discord.ui.Button(label="К последним", custom_id="sd:history"))
+        buttons.append(discord.ui.Button(label="К последним", custom_id=f"sd:history:{category}"))
     if len(entries) > PAGE_SIZE:
-        buttons.append(discord.ui.Button(label="Раньше", custom_id=f"sd:history:{entries[PAGE_SIZE - 1][0]}"))
+        buttons.append(discord.ui.Button(label="Раньше", custom_id=f"sd:history:{category}:{entries[PAGE_SIZE - 1][0]}"))
     icon = button_icon("history") or "📒"
     await send_card(inter, embed(f"{icon} История монет", content), "balance",
-                    rows=[buttons] if buttons else [], ephemeral=True,
+                    rows=[[filters], buttons] if buttons else [[filters]], ephemeral=True,
                     allowed_mentions=discord.AllowedMentions.none())
 
 
