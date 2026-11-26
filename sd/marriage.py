@@ -76,7 +76,7 @@ def ring_action_select(owned: dict[str, int], current: str | None) -> discord.ui
         emoji = discord.PartialEmoji.from_str(ring_emo(key))
         options.append(discord.SelectOption(
             label=f"Купить: {name}", value=f"buy:{key}",
-            description=f"{fmt(price)} монет", emoji=emoji))
+            description=f"{price:,} монет".replace(",", " "), emoji=emoji))
     for key, (name, _, _) in RINGS.items():
         if owned.get(key, 0) > 0:
             emoji = discord.PartialEmoji.from_str(ring_emo(key))
