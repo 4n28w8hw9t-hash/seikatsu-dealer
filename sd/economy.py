@@ -159,7 +159,10 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     except Exception:
         avatar = None
     banners = getattr(bot, "banners", {})
-    rows = [["work", "path", "ach", "couple"]]
+    actions = ["work", "path", "ach", "couple"]
+    if m.id == inter.user.id:
+        actions.append("inventory")
+    rows = [actions]
     try:
         png = await asyncio.to_thread(
             art.profile_card, banners.get(title_banner(path, lvl, is_female(m)) or "")
