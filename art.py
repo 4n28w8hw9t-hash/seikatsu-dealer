@@ -5,7 +5,7 @@
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 RED = (209, 53, 57)
 DARK_RED = (150, 28, 34)
@@ -462,6 +462,46 @@ def _icon(name, size):
     if not name or not os.path.exists(p):
         return None
     return Image.open(p).convert("RGBA").resize((size, size), Image.LANCZOS)
+
+
+def ring_collection_card(banner_path, rings: list[dict], W: int = 1000, H: int = 370) -> bytes:
+    """Коллекция колец: цветные значки для доступных, серые — для ещё не найденных."""
+    img = _pbg(W, H)
+    _portrait(img, banner_path, 300)
+    d = ImageDraw.Draw(img)
+    x0, right, y0 = 340, W - 30, 110
+    title, f = _pfit(d, "КОЛЛЕКЦИЯ КОЛЕЦ", "sc", 42, right - x0, 20)
+    _shadow_text(d, (x0, 34), title, f, P_CREAM)
+    cw, gap, h = (right - x0 - 2 * 12) / 3, 12, 220
+    for i, ring in enumerate(rings):
+        x = x0 + i * (cw + gap)
+        d.rounded_rectangle([x, y0, x + cw, y0 + h], radius=10, fill=P_PANEL,
+                            outline=P_GOLD_D if ring["owned"] else (75, 66, 64), width=2)
+        badge = _icon(f"ring_{ring['key']}", 86)
+        if badge:
+            if not ring["owned"]:
+                grey = ImageOps.grayscale(badge).convert("RGBA")
+                grey.putalpha(badge.getchannel("A"))
+                badge = grey
+            img.paste(badge, (round(x + (cw - 86) / 2), y0 + 18), badge)
+        name, f = _pfit(d, ring["name"], "text", 25, cw - 20, 14)
+        _t(d, (x + (cw - _tl(d, name, f)) / 2, y0 + 118), name, f,
+           P_CREAM if ring["owned"] else P_MUTED)
+        if ring["current"]:
+            status = "НАДЕТО В ПРОФИЛЕ"
+            fill = P_GOLD
+        elif ring["owned"]:
+            status = f"ЕСТЬ: {ring['qty']}"
+            fill = P_GOLD
+        else:
+            status = f"НЕТ · {ring['price']:,} МОН.".replace(",", " ")
+            fill = P_MUTED
+        status, f = _pfit(d, status, "sc6", 18, cw - 20, 12)
+        _t(d, (x + (cw - _tl(d, status, f)) / 2, y0 + 166), status, f, fill)
+    _pframe(img)
+    out = _io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
 
 
 def panel_card(banner_path, title: str, subtitle: str = "", icon: str = "", bar=None,
