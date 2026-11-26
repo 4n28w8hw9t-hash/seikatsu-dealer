@@ -169,15 +169,18 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     data["showcase"] = [(key, *badge(key)) for key in await selection(g, m.id)]
     banners = getattr(bot, "banners", {})
     actions = ["work", "path", "ach", "couple"]
+    weekly_quests = btn("quests", label="Еженедельные поручения")
+    extras = [weekly_quests]
     if m.id == inter.user.id:
         actions.append("inventory")
-    rows = [actions, ["showcase"]] if m.id == inter.user.id else [actions]
+        extras.insert(0, "showcase")
+    rows = [actions, extras, "---", ["menu"]]
     try:
         png = await asyncio.to_thread(
             art.profile_card, banners.get(title_banner(path, lvl, is_female(m)) or "")
             or banners.get("profile")
             or banners.get("help"), data, avatar)
-        return await reply(inter, image=("profile.png", png), rows=rows)
+        return await reply(inter, image=("profile.png", png), rows=rows, nav=False)
     except Exception as ex:
         print("Карточка профиля не нарисована:", repr(ex))
     e = embed(f"Профиль {m.display_name}", f"**{title}** · уровень **{lvl}** · опыт {have} / {need}")
@@ -186,5 +189,5 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
         e.add_field(name=n, value=v)
     if data["showcase"]:
         e.add_field(name="Витрина", value=" · ".join(label for _, label, _, _ in data["showcase"]), inline=False)
-    await reply(inter, embed=e, rows=rows)
+    await reply(inter, embed=e, rows=rows, nav=False)
 
