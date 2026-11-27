@@ -638,6 +638,48 @@ def panel_card(banner_path, title: str, subtitle: str = "", icon: str = "", bar=
     return out.getvalue()
 
 
+def court_event_card(banner_path, month, total, goal, personal, personal_goal):
+    """Баннер события и две шкалы в одном изображении."""
+    with Image.open(banner_path) as source:
+        banner = source.convert("RGB")
+    width, top = banner.size
+    image = Image.new("RGB", (width, top + 216), (27, 9, 13))
+    image.paste(banner, (0, 0))
+    draw = ImageDraw.Draw(image)
+
+    pad, gap = 44, 24
+    tile_width = (width - 2 * pad - gap) // 2
+    period_font = _pfont("sc6", 31)
+    label_font = _pfont("sc6", 36)
+    value_font = _pfont("text", 40)
+    _t(draw, (pad, top + 18), f"Вклад за {month}", period_font, P_CREAM)
+
+    for index, (label, points, target) in enumerate((
+        ("Весь двор", total, goal), ("Твой вклад", personal, personal_goal),
+    )):
+        x = pad + index * (tile_width + gap)
+        right = x + tile_width
+        y = top + 66
+        draw.rounded_rectangle((x, y, right, y + 116), radius=12, fill=P_TILE,
+                               outline=P_GOLD if points >= target else P_GOLD_D, width=2)
+        _t(draw, (x + 22, y + 13), label, label_font, P_CREAM)
+        value = f"{points} / {target}"
+        _t(draw, (right - 22 - _tl(draw, value, value_font), y + 11), value, value_font, P_GOLD)
+
+        left, right = x + 22, right - 22
+        track_y = y + 74
+        draw.rounded_rectangle((left, track_y, right, track_y + 20), radius=10, fill=(9, 2, 5),
+                               outline=P_GOLD_D, width=2)
+        fill = round((right - left - 6) * min(points, target) / target)
+        if fill:
+            draw.rounded_rectangle((left + 3, track_y + 3, left + 3 + fill, track_y + 17),
+                                   radius=min(7, fill // 2), fill=P_GOLD)
+
+    out = _io.BytesIO()
+    image.save(out, "JPEG", quality=93)
+    return out.getvalue()
+
+
 _THUMBS = {}
 
 

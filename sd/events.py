@@ -1,10 +1,12 @@
 """Shared monthly event, with a single commemorative badge per participant."""
+import asyncio
 from datetime import datetime
 
+import art
 import discord
 from discord import app_commands
 
-from .core import bot, button_icon, embed, send_card
+from .core import bot, embed, reply, send_card
 from .quests import COURT_TZ
 
 GOAL = 40
@@ -15,12 +17,6 @@ def event_window(now=None):
     day = datetime.now(COURT_TZ) if now is None else datetime.fromtimestamp(now, COURT_TZ)
     end = day.replace(day=8, hour=0, minute=0, second=0, microsecond=0)
     return day.strftime("%Y-%m"), int(end.timestamp()), day.day < 8
-
-
-def progress_line(label, points, goal):
-    filled = min(points, goal) * 10 // goal
-    bar = "▰" * filled + "▱" * (10 - filled)
-    return f"**{label}** · **{points}/{goal}**\n{bar}"
 
 
 async def record_contribution(db, guild_id, user_id, now=None):
@@ -49,28 +45,22 @@ async def show(inter, notice="", *, show_help=False):
                              day=1, hour=0, minute=0, second=0, microsecond=0)
     next_start = int(next_month.timestamp())
     total, personal, claimed = await event_progress(bot.db, inter.guild_id, month, inter.user.id)
-    lines = [
-        f"**Общее дело · {month}**",
-        "",
-        progress_line("Весь двор", total, GOAL),
-        progress_line("Твой вклад", personal, PERSONAL_GOAL),
-        "",
-    ]
+    lines = []
     rows = []
     if active:
         lines.append(f"**Сбор открыт** до <t:{ends}:F> (<t:{ends}:R>).")
     else:
-        result = "Двор достиг общей цели." if total >= GOAL else "Двор не достиг общей цели."
-        lines.extend((f"**Итоги события.** {result}", f"Следующий сбор откроется <t:{next_start}:F>."))
+        result = "Общая цель достигнута" if total >= GOAL else "Общая цель не достигнута"
+        lines.extend((f"**{result}.**", f"Следующий сбор <t:{next_start}:F>."))
     if claimed:
-        lines.append("Твой памятный знак уже в Витрине.")
+        if not notice:
+            lines.append("Твой памятный знак уже в Витрине.")
         rows.append(["showcase"])
     elif total >= GOAL and personal >= PERSONAL_GOAL:
         lines.append(f"Твой знак готов. Его можно забрать до <t:{next_start}:F>.")
         rows.append(["event:claim"])
-    elif not active:
-        reason = "Не хватило личного вклада." if total >= GOAL else "Для знака нужна общая победа двора."
-        lines.append(reason)
+    elif not active and total >= GOAL:
+        lines.append("Для знака не хватило личного вклада.")
     if active and show_help:
         lines.extend(("", "**Чем помочь двору**", "Служба и ежедневная награда дают по одному вкладу."))
         rows.append(["work", "daily"])
@@ -78,8 +68,20 @@ async def show(inter, notice="", *, show_help=False):
         rows.append(["event:help"])
     if notice:
         lines.extend(("", notice))
-    title = f"{button_icon('court_event') or '🏆'} Событие двора"
-    await send_card(inter, embed(title, "\n".join(lines)), "court_event", rows=rows)
+    status = "\n".join(lines)
+    banner = getattr(bot, "banners", {}).get("court_event")
+    if banner:
+        try:
+            image = await asyncio.to_thread(art.court_event_card, banner, month, total, GOAL,
+                                            personal, PERSONAL_GOAL)
+        except (OSError, ValueError) as error:
+            print("Карточка события не нарисована:", repr(error))
+        else:
+            await reply(inter, embed=embed("", status), image=("court-event.jpg", image), rows=rows)
+            return
+    progress = f"Весь двор **{total}/{GOAL}** · Твой вклад **{personal}/{PERSONAL_GOAL}**"
+    await send_card(inter, embed("Событие двора", f"**{month}**\n{progress}\n{status}"),
+                    "court_event", rows=rows)
 
 
 async def claim(inter):
