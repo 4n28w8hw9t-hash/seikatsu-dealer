@@ -17,7 +17,7 @@ ART = Path(__file__).resolve().parents[1] / "winter_art"
 ACTIONS = {
     "ball": ("Бал зимней луны", "🌙", "ball"),
     "raid": ("Битва недели", "⚔️", "raid"),
-    "counter": ("Ответный ход", "🛡️", "raid"),
+    "counter": ("Ответный ход", "🛡️", "shield"),
     "strike": ("В бой", "⚔️", "raid"),
     "santa": ("Тайный Санта", "🎁", "santa"),
     "offer": ("Положить подарок", "🎁", "santa"),
@@ -27,7 +27,7 @@ ACTIONS = {
     "pair": ("Парное поручение", "💍", "rings"),
     "pairday": ("Выполнить свою часть", "💍", "rings"),
     "gifts": ("Мои награды", "🎖️", "crown"),
-    "claim": ("Открыть сундук", "🎁", "santa"),
+    "claim": ("Открыть сундук", "🎁", "winter_chest"),
     "dress": ("Оформление", "🖼️", "card"),
     "hall": ("Лунный зал", "🌙", "card"),
     "night": ("Северная ночь", "🌌", "card"),
@@ -43,7 +43,7 @@ for action, (label, emoji, icon) in ACTIONS.items():
     BUTTONS["wb:" + action] = (
         label,
         emoji,
-        "wb_" + icon,
+        "season_archive" if action == "archive" else "wb_" + icon,
         _OK if action in ("strike", "offer", "claim") else _B,
     )
 for i in range(3):

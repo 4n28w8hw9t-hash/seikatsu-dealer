@@ -16,6 +16,13 @@ from .winter_snow import snowfall
 
 KIND_LABELS = {"frame":"Рамка аватара","skin":"Фон карточки профиля","pair":"Комплект колец для пары"}
 
+TARGET_ICONS = (
+    ("wb_shield",) * 3,
+    ("wb_wolf_track",) * 3,
+    ("wb_bell_copper", "wb_bell_silver", "wb_bell_gold"),
+    ("wb_ice_mirror",) * 3,
+)
+
 NAMES = {
     "siege": ("На осаду", "shield"),
     "pack": ("Слепить снежки", "basket"),
@@ -41,8 +48,10 @@ for key, (label, icon) in NAMES.items():
     BUTTONS["wb:" + key] = (label, "❄️", "wb_" + icon, _B)
 
 
-def button(key, label=None, token=""):
+def button(key, label=None, token="", *, icon=None):
     b = btn("wb:" + key, label)
+    if icon:
+        b.emoji = button_emoji(icon, "❄️")
     if token:
         b.custom_id += "@" + token
     return b
@@ -63,7 +72,7 @@ def battlefield(idx, damage, goal, used, last, marks):
         d.rounded_rectangle(
             (x, 331, x + 310, 407), 10, fill="#243950", outline="#a7cade" if i == last else "#52697f", width=2
         )
-        icon = art._icon(("wb_shield", "wb_boss1", "wb_santa", "wb_crown")[idx], 48)
+        icon = art._icon(TARGET_ICONS[idx][i], 48)
         im.paste(icon, (x + 10, 344), icon)
         d.text((x + 62, 367), label, font=art._pfont("sc6", 26), anchor="lm", fill="#eef3f3")
         if i == last:
@@ -202,7 +211,7 @@ async def show(inter, key, stamp="", *, send=None):
             elif used < 5:
                 rows.append(
                     [
-                        button("aim" + str(i), name, f"{day}.{u}.{used}")
+                        button("aim" + str(i), name, f"{day}.{u}.{used}", icon=TARGET_ICONS[idx][i])
                         for i, name in enumerate(s.TARGETS[idx])
                     ]
                 )
