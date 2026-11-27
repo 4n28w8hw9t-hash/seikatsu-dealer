@@ -105,6 +105,34 @@ class WinterBallTests(IsolatedAsyncioTestCase):
         self.assertEqual(await w.cosmetics(self.db, 1, 1), ("night", "frost"))
         self.assertEqual(await w.first(self.db, "SELECT flakes FROM winter26_players WHERE u=1", ()), 0)
 
+    async def test_guest_story_catchup_and_heirlooms(self):
+        from sd import winter_guests as guests
+        from sd.snowballs import inventory
+        g, u = 1, 7
+        await self.act(u, "ball", w.START)
+        async with core.bot.transaction() as db:
+            async def solve(i, day):
+                return await guests.journal(db,g,u,day,f"{u}.{i}.{guests.CHAPTERS[i][3]}")
+            await solve(0,w.START)
+            await solve(1,w.START)
+            await solve(0,w.START)
+            finale = w.END - timedelta(days=1)
+            await guests.journal(db,g,u,finale,"8.1.2")
+            self.assertEqual(await inventory(db,g,u), {"shard0"})
+            for i in range(1,4):
+                await solve(i,finale)
+            await solve(3,finale)
+            self.assertEqual(await w.first(db,"SELECT flakes FROM winter26_players WHERE g=? AND u=?",(g,u)),40)
+            for _ in range(2):
+                await guests.workshop(db,g,u,"brooch",None,False,False)
+            self.assertIn("moon_brooch", await inventory(db,g,u))
+            marriage=(7,8,12345)
+            await guests.workshop(db,g,u,"engrave",marriage,True,False)
+            self.assertFalse(await w.first(db,"SELECT 1 FROM winter26_engraving",()))
+            for _ in range(2):
+                await guests.workshop(db,g,u,"engrave",marriage,True,True)
+            self.assertEqual(await w.first(db,"SELECT COUNT(*) FROM winter26_engraving",()),1)
+
     async def test_pages_and_profile_render(self):
         inter = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=3))
 
@@ -132,6 +160,8 @@ class WinterBallTests(IsolatedAsyncioTestCase):
                 "pack",
                 "store",
                 "itemlace",
+                "journal",
+                "workshop",
                 "itemyard",
                 "itemrings",
                 "itemaurora",

@@ -490,6 +490,8 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
         img.paste(rings, (mid-34,38), rings)
     else:
         _heart(d, mid, 70, 20, P_GOLD)
+    if rings and data.get("engraved"):
+        d.text((mid,116), "Первая зимняя луна", font=_pfont("sc6",18), fill=P_GOLD, anchor="mm")
     names = " & ".join(str(n) for n in data["names"])
     names, f = _pfit(d, names, "sc", 44, right - tx, 22)
     _shadow_text(d, (mid - _tl(d, names, f) / 2, 136), names, f, P_CREAM)

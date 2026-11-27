@@ -411,6 +411,8 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
     data["moon_rings"] = await pair_days(bot.db,inter.guild_id,mar["a"],mar["b"],mar["since"]) >= 3
     from .winter_state import first
     data["moon_rings"] = data["moon_rings"] or await first(bot.db,"SELECT COUNT(*)=2 FROM winter26_rings WHERE g=? AND u IN (?,?)",(inter.guild_id,mar["a"],mar["b"]))
+    data["engraved"] = await first(bot.db, "SELECT 1 FROM winter26_engraving WHERE g=? AND a=? AND b=? AND since=?",
+                                  (inter.guild_id,mar["a"],mar["b"],mar["since"]))
     preview=inter.extras.get("snow_preview")=="rings"
     if preview: data["moon_rings"]=True
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
@@ -425,7 +427,7 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
     except Exception as ex:
         print("Парная карточка не нарисована:", repr(ex))
     if data["moon_rings"]:
-        data["cells"].append(("Памятные кольца", "Зимняя луна"))
+        data["cells"].append(("Памятные кольца", "Первая зимняя луна" if data["engraved"] else "Зимняя луна"))
     e = embed(f"💞 {names[0]} & {names[1]}", f"Уровень пары **{lvl}**")
     for n, v in data["cells"]:
         e.add_field(name=n, value=v)

@@ -158,7 +158,7 @@ async def show(inter, key="ball"):
             )
         banner="siege"
         lines[1]="Слепи пять снежков и помоги двору отстоять крепость. Подсказка караула укажет, куда бросать."
-        actions = [["wb:pack","wb:siege","wb:duels","wb:store"],["archive","game","santa","wb:relay"],["wb:princess","gifts","dress"]]
+        actions = [["wb:pack","wb:siege","wb:duels","wb:store"],["archive","game","santa","wb:relay"],["wb:princess","gifts","dress","wb:journal"]]
     elif page in ("raid", "archive"):
         if page == "raid" and idx is not None:
             image = await asyncio.to_thread(raid_card, idx, totals[idx], mine[idx], goals[idx])
