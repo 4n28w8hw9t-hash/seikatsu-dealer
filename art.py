@@ -311,13 +311,25 @@ def _pframe(img):
         d.polygon([(cx, cy - 7), (cx + 7, cy), (cx, cy + 7), (cx - 7, cy)], fill=P_GOLD)
 
 
-def _char_for(banner_path):
-    """Вырезанный персонаж (chars/<имя>.png рядом с папкой banners), если он есть."""
+def portrait_path(banner_path):
+    """Locate the transparent portrait beside a banner, including older PNG assets."""
     if not banner_path:
         return None
-    stem = os.path.splitext(os.path.basename(banner_path))[0]
-    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(banner_path))), "chars", stem + ".png")
-    return Image.open(p).convert("RGBA") if os.path.exists(p) else None
+    banner_dir, filename = os.path.split(os.path.abspath(banner_path))
+    stem = os.path.splitext(filename)[0]
+    for extension in (".webp", ".png"):
+        path = os.path.join(os.path.dirname(banner_dir), "chars", stem + extension)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _char_for(banner_path):
+    path = portrait_path(banner_path)
+    if path is None:
+        return None
+    with Image.open(path) as portrait:
+        return portrait.convert("RGBA")
 
 
 def _portrait(img, banner_path, zone, *, skin=""):

@@ -359,12 +359,11 @@ async def _deliver(inter: discord.Interaction, kw: dict, ephemeral: bool):
 
 
 def char_thumb(key: str | None):
-    """Портрет персонажа (chars/<key>.png) для короткого ответа: (имя файла, байты) или None."""
+    """Квадратный портрет для короткого ответа."""
     path = getattr(bot, "banners", {}).get(key or "")
-    if not path:
+    char = art.portrait_path(path)
+    if not char:
         return None
-    char = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(path))), "chars",
-                        os.path.splitext(os.path.basename(path))[0] + ".png")
     try:
         data = art.thumb(char)
     except Exception as ex:
