@@ -411,10 +411,30 @@ def _cells(img, d, cells, x0, y, x1, cols, h=74, gap=12, panel=P_PANEL):
             img.paste(badge, (round(cx + cw - 48), round(cy + (h - 36) / 2)), badge)
 
 
+def _ring_strip(img, d, rings, left, top, right, caption):
+    _t(d, (left, top), caption, _pfont("sc6", 19), P_GOLD)
+    gap = 7
+    width = (right - left - gap * (len(rings) - 1)) / len(rings)
+    for i, (label, icon) in enumerate(rings):
+        x = round(left + i * (width + gap))
+        y = top + 25
+        d.rounded_rectangle((x, y, round(x + width), y + 34), 6, fill=P_PANEL, outline=P_GOLD_D)
+        badge = _icon(icon, 27)
+        if badge:
+            img.paste(badge, (x + 5, y + 4), badge)
+        label, font = _pfit(d, label, "text", 22, width - 45, 12)
+        _t(d, (x + 37, y + 4), label, font, P_CREAM)
+
+
 def profile_card(banner_path, data: dict, avatar: bytes | None = None,
                  W: int = 1000, H: int = 600) -> bytes:
     """Профиль: персонаж слева, аватар, имя, титул, опыт и карточки характеристик."""
     skin = data.get("skin", "")
+    badges = data.get("showcase") or []
+    rings = data.get("rings") or []
+    ring_top = H - 52
+    if rings:
+        H += 75 if badges else 30
     if skin:
         y, x = _np.mgrid[:H,:W]
         glow = _np.exp(-((x-W*.20)/(W*.29))**2 - ((y-H*.32)/(H*.70))**2)
@@ -459,7 +479,8 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
              f"Опыт {data['have']:,} / {data['need']:,}".replace(",", " "))
     _cells(img, d, data["cells"], tx, y + 22, right, cols=2,
            panel={"hall": (25,40,65), "yard": (36,55,77), "night": (15,52,55)}.get(skin,P_PANEL))
-    badges = data.get("showcase") or []
+    if rings:
+        _ring_strip(img, d, rings, tx, ring_top, right, "КОЛЛЕКЦИЯ КОЛЕЦ")
     if badges:
         gap = 10
         width = (right - tx - 2 * gap) / 3
@@ -491,7 +512,10 @@ def _heart(d, cx, cy, r, fill):
 
 def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
                 avatar_b: bytes | None = None, W: int = 1000, H: int = 500) -> bytes:
-    """Парный профиль: две аватарки с сердцем, имена, уровень и опыт пары, три плашки."""
+    """Парный профиль с опытом пары и коллекцией колец."""
+    collection = data.get("rings") or []
+    if collection:
+        H += 33
     img = _pbg(W, H)
     tx = _portrait(img, banner_path, 400)
     d = ImageDraw.Draw(img)
@@ -523,6 +547,8 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
         if badge:
             img.paste(badge, (tx, y + 117), badge)
         _t(d, (tx + 42, y + 120), label, font, P_GOLD)
+    if collection:
+        _ring_strip(img, d, collection, tx, H - 78, right, "КОЛЛЕКЦИЯ ПАРЫ")
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")

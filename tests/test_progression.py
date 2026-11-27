@@ -38,6 +38,57 @@ class ProgressionTests(IsolatedAsyncioTestCase):
         self.addAsyncCleanup(bot.db.close)
         self.inter = SimpleNamespace(guild_id=7, user=SimpleNamespace(id=1))
 
+    async def test_rings_purchase_profiles_collection_and_dropdown(self):
+        from io import BytesIO
+        from PIL import Image
+        from sd import economy, marriage
+
+        user = SimpleNamespace(id=1, display_name="Seikatsu", roles=[])
+        partner = SimpleNamespace(id=2, display_name="Vera", roles=[])
+        inter = SimpleNamespace(guild_id=7, guild=SimpleNamespace(id=7), user=user, extras={})
+        await core.bot.adjust_staff_balance(7, 1, 6000)
+        before = (await core.bot.get_user(7, 1))["balance"]
+        with patch.object(marriage, "reply", AsyncMock()) as sent:
+            await asyncio.gather(marriage.ring_action(inter, "buy:gold"), marriage.ring_action(inter, "buy:gold"))
+            self.assertEqual(await marriage.get_rings(7, 1), {"gold": 1})
+            rows = sent.call_args.kwargs["rows"]
+            self.assertIn("profile", rows[1])
+            self.assertEqual([opt.value for opt in rows[0][0].options], ["buy:silver", "buy:ruby"])
+        self.assertEqual((await core.bot.get_user(7, 1))["balance"], before - 1500)
+
+        async def profile(target):
+            with (
+                patch.object(economy, "reply", AsyncMock()) as sent,
+                patch.object(economy, "member_name", AsyncMock(return_value="Пара")),
+                patch.object(economy, "_ranked", AsyncMock(return_value=[])),
+                patch.object(art, "profile_card", wraps=art.profile_card) as renderer,
+            ):
+                await economy.profile.callback(inter, target)
+                data = renderer.call_args.args[1]
+                image = sent.call_args.kwargs["image"][1]
+                return data["rings"], Image.open(BytesIO(image)).height
+
+        self.assertEqual(await profile(user), ([("Золото", "ring_gold")], 630))
+        async with core.bot.transaction() as db:
+            await db.execute("INSERT INTO marriages(guild_id,a,b,since,ring,bond_ring,xp) VALUES(7,1,2,42,'ruby','ruby',0)")
+        self.assertEqual(await marriage.purchase_ring(7, 2, "gold"), "owned")
+        self.assertEqual(await profile(partner), ([], 600))
+        custom = {"sd_ring_silver": "<:sd_ring_silver:123456789012345678>", "sd_ring_gold": "<:sd_ring_gold:234567890123456789>"}
+        with patch.object(core.bot, "emo", custom):
+            select = marriage.ring_action_select("ruby", {"ruby", "gold"}, paired=True)
+            self.assertEqual([(opt.value, opt.emoji.id) for opt in select.options],
+                             [("buy:silver", 123456789012345678), ("wear:gold", 234567890123456789)])
+            self.assertEqual(marriage.gift_ring_select({"gold": 1}).options[0].emoji.id, 234567890123456789)
+        with (
+            patch.object(marriage, "reply", AsyncMock()),
+            patch.object(marriage, "member_name", AsyncMock(return_value="Vera")),
+        ):
+            await marriage.ring_action(inter, "gift:gold")
+            await marriage.ring_action(inter, "wear:gold")
+        self.assertEqual(await profile(partner), ([("Золото", "ring_gold")], 630))
+        self.assertEqual(await profile(user), ([], 600))
+        self.assertEqual((await marriage.get_marriage(7, 1))["ring"], "gold")
+
     async def test_quest_reward_is_paid_once(self):
         async with core.bot.transaction() as db:
             await db.execute(
