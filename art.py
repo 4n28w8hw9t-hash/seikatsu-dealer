@@ -337,7 +337,7 @@ WIDE_RANK_PORTRAITS = {
 }
 
 
-def _portrait(img, banner_path, zone, *, skin=""):
+def _portrait(img, banner_path, zone, *, skin="", fit=False):
     """Персонаж в своей левой зоне карточки (не заходит на текст). Возвращает x начала текста."""
     W, H = img.size
     char = _char_for(banner_path)
@@ -345,11 +345,11 @@ def _portrait(img, banner_path, zone, *, skin=""):
     bottom = H - inset
     layer = Image.new("RGBA", (zone, H))
     if char is not None:
-        scale = H * 1.5 / char.height
+        scale = min(1, H * 1.5 / char.height)
         stem = os.path.splitext(os.path.basename(banner_path))[0]
-        if stem.startswith(("noble_", "faith_")):
+        if stem.startswith(("noble_", "faith_")) or fit:
             scale = min(1, (bottom - top) / char.height)
-        keep_full_width = stem in WIDE_RANK_PORTRAITS
+        keep_full_width = fit or stem in WIDE_RANK_PORTRAITS
         if keep_full_width:
             # These poses hold their props away from the body.
             scale = min(scale, (zone - 2 * inset) / char.width)
@@ -537,10 +537,11 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
                 avatar_b: bytes | None = None, W: int = 1000, H: int = 500) -> bytes:
     """Парный профиль с опытом пары и коллекцией колец."""
     collection = data.get("rings") or []
+    collection_top = 437 if data.get("anniversary") else 405
     if collection:
-        H += 33
+        H = max(H, collection_top + 75)
     img = _pbg(W, H)
-    tx = _portrait(img, banner_path, 400)
+    tx = _portrait(img, banner_path, 400, fit=True)
     d = ImageDraw.Draw(img)
     right = W - 34
     mid = (tx + right) // 2
@@ -571,7 +572,7 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
             img.paste(badge, (tx, y + 117), badge)
         _t(d, (tx + 42, y + 120), label, font, P_GOLD)
     if collection:
-        _ring_strip(img, d, collection, tx, H - 78, right, "КОЛЛЕКЦИЯ ПАРЫ")
+        _ring_strip(img, d, collection, tx, collection_top, right, "КОЛЛЕКЦИЯ ПАРЫ")
     _pframe(img)
     out = _io.BytesIO()
     img.save(out, "PNG")
@@ -609,7 +610,7 @@ def role_swatch(name: str, color: int) -> bytes:
 def ring_collection_card(banner_path, rings: list[dict], W: int = 1000, H: int = 370) -> bytes:
     """Коллекция колец: цветные значки для доступных, серые — для ещё не найденных."""
     img = _pbg(W, H)
-    _portrait(img, banner_path, 300)
+    _portrait(img, banner_path, 300, fit=True)
     d = ImageDraw.Draw(img)
     x0, right, y0 = 340, W - 30, 110
     title, f = _pfit(d, "КОЛЛЕКЦИЯ КОЛЕЦ", "sc", 42, right - x0, 20)
@@ -735,7 +736,7 @@ def panel_card(banner_path, title: str, subtitle: str = "", icon: str = "", bar=
         y += 48
     _pframe(img)
     out = _io.BytesIO()
-    img.save(out, "JPEG", quality=90)
+    img.save(out, "JPEG", quality=94, subsampling=0, optimize=True)
     return out.getvalue()
 
 
@@ -777,7 +778,7 @@ def court_event_card(banner_path, month, total, goal, personal, personal_goal):
                                    radius=min(7, fill // 2), fill=P_GOLD)
 
     out = _io.BytesIO()
-    image.save(out, "JPEG", quality=93)
+    image.save(out, "JPEG", quality=94, subsampling=0, optimize=True)
     return out.getvalue()
 
 
@@ -798,12 +799,14 @@ def thumb(char_path: str, size: int = 256) -> bytes | None:
     side = min(ch.width, round(ch.height * fraction))
     x0 = (ch.width - side) // 2
     top = max(1, round(size * 0.055))
-    height = size - top
-    width = round(size * 0.94) if is_pair else size
-    # Use a square crop throughout so faces keep their proportions.
+    inset = 6
+    height = size - top - inset
+    width = min(size - 2 * inset, round(size * 0.94)) if is_pair else size - 2 * inset
+    # Keep the square crop and illustration inside the gold border.
     face = ch.crop((x0, 0, x0 + side, side)).resize((width, width), Image.LANCZOS)
+    face = face.crop((0, 0, width, min(width, height)))
     bg = _pbg(size, size, cx=0.5).convert("RGBA")
-    bg.alpha_composite(face.crop((0, 0, width, height)), ((size - width) // 2, top))
+    bg.alpha_composite(face, ((size - width) // 2, top))
     d = ImageDraw.Draw(bg)
     d.rectangle([3, 3, size - 4, size - 4], outline=P_GOLD_D, width=3)
     out = _io.BytesIO()
