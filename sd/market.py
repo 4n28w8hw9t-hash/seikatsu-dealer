@@ -574,6 +574,10 @@ async def inventory_rings(inter: discord.Interaction):
         text = f"**Личный запас:** {total}\n" + "\n".join(lines)
         text += "\n\nКоллекция пары появится после свадьбы."
         rows.append(["rings"])
+    from .winter_state import first
+    if await first(bot.db, "SELECT 1 FROM winter26_rings WHERE g=? AND u=?", (g, uid)):
+        text += "\n\n💍 **Кольца Зимней луны** · личная памятная награда бала"
+        rows.append(["wb:pair", "showcase"])
     await send_card(inter, embed("🎒 Инвентарь · Кольца", text), "inventory_rings", rows=rows)
 
 

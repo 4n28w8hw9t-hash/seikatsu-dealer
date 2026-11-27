@@ -11,7 +11,7 @@ from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
 from .levels import PATHS, RANK_STEP, WORK_COOLDOWN, get_path, is_female, next_rank, rank_of, work_pay, xp_for
-from . import events, ledger, market, marriage, onboarding, pair_quests, quests, reminders, showcase, top
+from . import winter, events, ledger, market, marriage, onboarding, pair_quests, quests, reminders, showcase, top
 from .paths import choose_path, pick_path, work
 from .marriage import buy_ring, couple, divorce, divorce_confirm, love_room, rings_shop
 
@@ -49,6 +49,7 @@ async def help_cmd(inter: discord.Interaction):
                       "`/инвентарь` — сколько у тебя ролей и колец\n"
                       "`/роли` — надеть, снять, выставить на продажу\n"
                       f"`/магазин` — купить роль; создатель получает {round(market.SELLER_SHARE * 100)}% с продажи")
+    e.add_field(name="🌙 Бал зимней луны", value="`/бал` — расписание боссов, Тайный Санта и зимние награды", inline=False)
     e.set_footer(text="Админам: /эко — управление монетами")
     await send_card(inter, e, "help")
 
@@ -67,6 +68,7 @@ MENU_MODALS = {"coin": ("Монетка", "Ставка", "например 100"
 
 # выпадающий список «Все разделы»: (ключ, подпись, пояснение)
 SECTIONS = [
+    ("wb:ball", "Бал зимней луны", "Зимние боссы, снежинки и подарки"),
     ("profile", "Профиль", "Твой уровень, титул и место в топе"),
     ("inventory", "Инвентарь", "Твои роли и кольца"),
     ("quests", "Поручения двора", "Еженедельные задания и награда"),
@@ -166,12 +168,14 @@ async def dashboard(inter: discord.Interaction):
     if first_day and not first_day[1]:
         shortcuts.append("onboarding")
     await send_panel(inter, "menu", f"Покои · {m.display_name}", subtitle=sub, icon="profile",
-                     bar=bar, tiles=tiles, lines=lines, rows=[quick[:3], shortcuts, [sections_select()]], nav=False)
+                     bar=bar, tiles=tiles, lines=lines, rows=[[*quick[:3], "wb:ball"], shortcuts, [sections_select()]], nav=False)
 
 
 async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: str = ""):
     if key == "menu":
         await dashboard(inter)
+    elif key.startswith("wb:"):
+        await winter.show(inter, key[3:])
     elif key == "profile":
         await profile.callback(inter, None)
     elif key == "work":
@@ -348,7 +352,8 @@ async def on_interaction(inter: discord.Interaction):
     if key in ("ringbook:action", "ringbook:giftselect", "inv:filter", "anniversary:pick", "showcase:toggle", "showcase:more", "season:archive"):
         vals = (inter.data or {}).get("values") or [""]
         side = str(vals[0])
-    if (key not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:toggle", "showcase:more", "showcase:clear")
+    registered = key.partition("@")[0] if key.startswith("wb:") else key
+    if (registered not in BUTTONS and key not in ("inv:filter", "anniversary:pick", "showcase:save", "showcase:toggle", "showcase:more", "showcase:clear")
             and not key.startswith(("mk:", "inv:roles:", "history:", "season:archive:"))):
         return
     try:
@@ -392,7 +397,7 @@ def menu_page() -> dict:
                      "-# Командами остались действия с другим игроком: "
                      "`/перевод`, `/дуэль` и `/брак`."),
         color=RED)
-    rows = [["menu", "daily", "work"], ["profile", "inventory", "quests", "balance"], [sections_select()]]
+    rows = [["menu", "daily", "work", "wb:ball"], ["profile", "inventory", "quests", "balance"], [sections_select()]]
     kw = {"embed": e, "rows": rows, "nav": False}
     b = getattr(bot, "banners", {})
     path = b.get("menu") or b.get("help")

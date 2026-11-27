@@ -407,6 +407,8 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
             "need": xp_for(lvl + 1) - xp_for(lvl),
             "cells": [("Вместе", f"{days} дн."), ("Кольцо", ring_name),
                       ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
+    from .winter_state import pair_days
+    data["moon_rings"] = await pair_days(bot.db,inter.guild_id,mar["a"],mar["b"],mar["since"]) >= 3
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
     mine = inter.user.id in (mar["a"], mar["b"])
     rows = [["loveroom", "pairquest"], ["ringbook", "anniversary", "roomname", "divorce"]] if mine else []
@@ -417,6 +419,8 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
         return await reply(inter, image=("couple.png", png), rows=rows)
     except Exception as ex:
         print("Парная карточка не нарисована:", repr(ex))
+    if data["moon_rings"]:
+        data["cells"].append(("Памятные кольца", "Зимняя луна"))
     e = embed(f"💞 {names[0]} & {names[1]}", f"Уровень пары **{lvl}**")
     for n, v in data["cells"]:
         e.add_field(name=n, value=v)
