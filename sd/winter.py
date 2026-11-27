@@ -11,7 +11,7 @@ import art
 
 from . import snow_court, winter_state as w
 from .core import _B, _G, _OK, BUTTONS, bot, btn, reply
-from .winter_snow import snowfall
+from .winter_snow import BANNER_WIDTH, snowfall, winter_px
 
 ART = Path(__file__).resolve().parents[1] / "winter_art"
 ACTIONS = {
@@ -60,17 +60,17 @@ def snow_banner(key):
 def raid_card(idx, total, mine, goal):
     won = total >= goal
     path = ART / ("victory.jpg" if idx == 3 and won else f"boss{idx}.jpg")
-    img = Image.new("RGB", (1000, 416), "#101b30")
+    img = Image.new("RGB", (BANNER_WIDTH, winter_px(416)), "#101b30")
     with Image.open(path) as banner:
         img.paste(banner, (0, 0))
     d = ImageDraw.Draw(img)
     label = "Победа двора" if won else "Урон двора"
-    d.text((32, 328), f"{label} · {min(total, goal)} / {goal}", font=art._pfont("sc6", 28), fill="#d9e7f3")
-    d.text((968, 328), f"Твои выходы · {mine}", font=art._pfont("sc6", 28), fill="#d9e7f3", anchor="ra")
-    d.rounded_rectangle((32, 380, 968, 394), 7, fill="#26364d", outline="#8099ad")
+    d.text(winter_px(32, 328), f"{label} · {min(total, goal)} / {goal}", font=art._pfont("sc6", winter_px(28)), fill="#d9e7f3")
+    d.text(winter_px(968, 328), f"Твои выходы · {mine}", font=art._pfont("sc6", winter_px(28)), fill="#d9e7f3", anchor="ra")
+    d.rounded_rectangle(winter_px(32, 380, 968, 394), winter_px(7), fill="#26364d", outline="#8099ad")
     width = round(932 * min(total, goal) / goal)
     if width:
-        d.rounded_rectangle((34, 382, 34 + width, 392), 5, fill="#a9d8e7")
+        d.rounded_rectangle(winter_px(34, 382, 34 + width, 392), winter_px(5), fill="#a9d8e7")
     return snowfall(img)
 
 

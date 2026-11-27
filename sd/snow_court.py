@@ -13,7 +13,7 @@ from . import snowballs as s
 from . import winter_state as w
 from . import winter_guests as guests
 from .core import _B, BUTTONS, bot, btn, button_emoji, reply
-from .winter_snow import snowfall
+from .winter_snow import BANNER_HEIGHT, BANNER_WIDTH, snowfall, winter_px
 
 KIND_LABELS = {"frame":"Рамка аватара","skin":"Фон карточки профиля","pair":"Комплект колец для пары"}
 
@@ -67,36 +67,36 @@ def button(key, label=None, token="", *, icon=None):
 def battlefield(idx, damage, goal, used, last, marks):
     from .winter import ART
 
-    im = Image.new("RGB", (1000, 478), "#101b30")
+    im = Image.new("RGB", (BANNER_WIDTH, winter_px(478)), "#101b30")
     with Image.open(ART / ("victory.jpg" if idx == 3 and damage >= goal else f"boss{idx}.jpg")) as bg:
         im.paste(bg, (0, 0))
     with Image.open(ART / "courtyard.jpg") as yard:
-        im.paste(yard.resize((1000, 94)), (0, 320))
+        im.paste(yard.resize((BANNER_WIDTH, winter_px(94)), Image.Resampling.LANCZOS), (0, BANNER_HEIGHT))
     d = ImageDraw.Draw(im)
     for i, label in enumerate(s.TARGETS[idx]):
         x = 20 + 324 * i
         d.rounded_rectangle(
-            (x, 331, x + 310, 407), 10, fill="#243950", outline="#a7cade" if i == last else "#52697f", width=2
+            winter_px(x, 331, x + 310, 407), winter_px(10), fill="#243950", outline="#a7cade" if i == last else "#52697f", width=winter_px(2)
         )
-        icon = art._icon(TARGET_ICONS[idx][i], 48)
-        im.paste(icon, (x + 10, 344), icon)
-        d.text((x + 62, 367), label, font=art._pfont("sc6", 26), anchor="lm", fill="#eef3f3")
+        icon = art._icon(TARGET_ICONS[idx][i], winter_px(48))
+        im.paste(icon, winter_px(x + 10, 344), icon)
+        d.text(winter_px(x + 62, 367), label, font=art._pfont("sc6", winter_px(26)), anchor="lm", fill="#eef3f3")
         if i == last:
             for dx, dy, r in [(0, 0, 9), (-12, -8, 3), (9, -11, 4), (13, 6, 2)]:
-                d.ellipse((x + 277 + dx - r, 365 + dy - r, x + 277 + dx + r, 365 + dy + r), fill="#f1f8ff")
+                d.ellipse(winter_px(x + 277 + dx - r, 365 + dy - r, x + 277 + dx + r, 365 + dy + r), fill="#f1f8ff")
         if idx == 3 and marks & (1 << i):
-            d.line((x + 20, 397, x + 285, 338), fill="#b7d6ed", width=2)
-    d.text((22, 418), f"Урон двора  {min(damage, goal)} / {goal}", font=art._pfont("sc6", 25), fill="#cee2ee")
+            d.line(winter_px(x + 20, 397, x + 285, 338), fill="#b7d6ed", width=winter_px(2))
+    d.text(winter_px(22, 418), f"Урон двора  {min(damage, goal)} / {goal}", font=art._pfont("sc6", winter_px(25)), fill="#cee2ee")
     d.text(
-        (977, 418),
+        winter_px(977, 418),
         f"Снежки  {max(0, 5 - used) if used >= 0 else 0} / 5",
         anchor="ra",
-        font=art._pfont("sc6", 25),
+        font=art._pfont("sc6", winter_px(25)),
         fill="#cee2ee",
     )
-    d.rounded_rectangle((22, 455, 977, 464), 4, fill="#30455b")
+    d.rounded_rectangle(winter_px(22, 455, 977, 464), winter_px(4), fill="#30455b")
     if damage:
-        d.rounded_rectangle((22, 455, 22 + round(955 * min(damage, goal) / goal), 464), 4, fill="#accfde")
+        d.rounded_rectangle(winter_px(22, 455, 22 + round(955 * min(damage, goal) / goal), 464), winter_px(4), fill="#accfde")
     return snowfall(im)
 
 
