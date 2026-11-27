@@ -188,10 +188,10 @@ class HistoryModal(discord.ui.Modal, title="История модерации п
 
 class ModerationButton(discord.ui.Button):
     def __init__(self, action, open_action, *, disabled):
-        label, _, emoji = ACTIONS[action]
+        label, _, fallback = ACTIONS[action]
         style = (discord.ButtonStyle.danger if action in ("kick", "ban") else
                  discord.ButtonStyle.primary if action == "mute" else discord.ButtonStyle.secondary)
-        super().__init__(label=label, emoji=emoji, style=style, row=2, disabled=disabled)
+        super().__init__(label=label, emoji=em(f"mod_{action}", fallback), style=style, row=2, disabled=disabled)
         self.action = action
         self.open_action = open_action
 
@@ -205,6 +205,9 @@ class ModerationView(discord.ui.View):
         self.owner_id, self.member = owner_id, member
         self.subject_id = member.id if member is not None else subject_id
         self.all_history.disabled = self.subject_id is None
+        self.unban.emoji = em("mod_unban", ACTIONS["unban"][2])
+        self.history.emoji = em("history", "📒")
+        self.all_history.emoji = em("adm_log", "📖")
         self.add_item(StaffSection(owner_id, member, "moderation"))
         for action in ("warn", "mute", "unmute", "kick", "ban"):
             self.add_item(ModerationButton(action, self.open_action, disabled=member is None))
@@ -265,14 +268,14 @@ class ModerationView(discord.ui.View):
             return await inter.response.send_message(problem, ephemeral=True)
         await inter.response.send_modal(ModerationModal(self.owner_id, self.member, action))
 
-    @discord.ui.button(label="Разбан по ID", emoji="🔓", row=3)
+    @discord.ui.button(label="Разбан по ID", row=3)
     async def unban(self, inter: discord.Interaction, _):
         problem = moderation_problem(inter.guild, inter.user, None, "unban")
         if problem:
             return await inter.response.send_message(problem, ephemeral=True)
         await inter.response.send_modal(ModerationModal(self.owner_id, None, "unban"))
 
-    @discord.ui.button(label="История по ID", emoji="📒", row=3)
+    @discord.ui.button(label="История по ID", row=3)
     async def history(self, inter: discord.Interaction, _):
         await inter.response.send_modal(HistoryModal(self.owner_id))
 
@@ -290,11 +293,16 @@ class ModerationLogView(discord.ui.View):
         self.owner_id, self.member, self.subject_id = owner_id, member, subject_id
         self.category = category if category in ACTIONS else "all"
         self.page = page
-        self.filters.options = [discord.SelectOption(label="Все действия", value="all", default=category == "all")]
-        self.filters.options += [
-            discord.SelectOption(label=label, value=key, default=key == category)
-            for key, (label, _, _) in ACTIONS.items()
+        self.filters.options = [
+            discord.SelectOption(label="Все действия", value="all", default=self.category == "all",
+                                 emoji=em("adm_log", "📒")),
+            *(discord.SelectOption(label=label, value=key, default=key == self.category,
+                                   emoji=em(f"mod_{key}", fallback))
+              for key, (label, _, fallback) in ACTIONS.items()),
         ]
+        self.previous.emoji = em("page_prev", "⬅️")
+        self.next.emoji = em("page_next", "➡️")
+        self.back.emoji = em("profile", "👤")
 
     async def interaction_check(self, inter: discord.Interaction):
         return await ModerationView.interaction_check(self, inter)

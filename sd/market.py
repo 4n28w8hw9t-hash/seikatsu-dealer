@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 
 import art
-from .core import ECON_LOCK, _B, _G, bot, btn, button_icon, icon_emoji, embed, fmt, member_name, reply, send_card
+from .core import ECON_LOCK, _B, _G, bot, btn, button_emoji, icon_emoji, embed, fmt, member_name, reply, send_card
 
 from .ledger import record as ledger_record, role_status
 
@@ -87,10 +87,10 @@ async def market(inter: discord.Interaction):
 
 
 MARKET_SORTS = {
-    "p": ("Популярные", "sold DESC, price ASC, id ASC"),
-    "c": ("Сначала дешевле", "price ASC, id ASC"),
-    "h": ("Сначала дороже", "price DESC, id ASC"),
-    "n": ("Сначала новые", "created DESC, id DESC"),
+    "p": ("Популярные", "sold DESC, price ASC, id ASC", "sort_popular", "⭐"),
+    "c": ("Сначала дешевле", "price ASC, id ASC", "sort_price_low", "⬇️"),
+    "h": ("Сначала дороже", "price DESC, id ASC", "sort_price_high", "⬆️"),
+    "n": ("Сначала новые", "created DESC, id DESC", "sort_new", "✨"),
 }
 
 
@@ -122,7 +122,8 @@ class MarketView:
 
 
 def market_back(state):
-    return discord.ui.Button(label="К списку", custom_id=f"sd:mk:list:{state.token()}", style=_G)
+    return discord.ui.Button(label="К списку", emoji=button_emoji("back_to_list", "📖"),
+                             custom_id=f"sd:mk:list:{state.token()}", style=_G)
 
 
 class MarketSearch(discord.ui.Modal, title="Поиск ролей"):
@@ -155,7 +156,7 @@ async def show_market(inter: discord.Interaction, state: MarketView | None = Non
     page = max(0, min(state.page, pages - 1))
     state = replace(state, page=page)
     offset = page * MARKET_PAGE_SIZE
-    _, order = MARKET_SORTS[state.sort]
+    _, order, _, _ = MARKET_SORTS[state.sort]
     cur = await bot.db.execute(
         f"SELECT {','.join(FIELDS)} FROM custom_roles WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
         (*params, MARKET_PAGE_SIZE, offset))
@@ -174,26 +175,30 @@ async def show_market(inter: discord.Interaction, state: MarketView | None = Non
               f"-# Найдено: {total} · Страница {page + 1} из {pages} · Продавцу {round(SELLER_SHARE * 100)}%")
     sort = discord.ui.Select(
         custom_id=f"sd:mk:sort:{state.token()}", placeholder="Сортировка",
-        options=[discord.SelectOption(label=label, value=key, default=key == state.sort)
-                 for key, (label, _) in MARKET_SORTS.items()])
+        options=[discord.SelectOption(label=label, value=key, default=key == state.sort,
+                                      emoji=button_emoji(icon, fallback))
+                 for key, (label, _, icon, fallback) in MARKET_SORTS.items()])
     rows_ui = [[sort]]
     if rows:
         rows_ui.append([discord.ui.Select(
             custom_id=f"sd:mk:pick:{state.token()}", placeholder="Открой роль, чтобы посмотреть цвет",
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
-                                          description=f"{r['price']} монет · продаж: {r['sold']}"[:100])
+                                          description=f"{r['price']} монет · продаж: {r['sold']}"[:100],
+                                          emoji=button_emoji("tag", "🏷️"))
                      for r in rows])])
-    search_icon = discord.PartialEmoji.from_str(button_icon("role_search") or "🔎")
+    search_icon = button_emoji("role_search", "🔎")
     actions = [discord.ui.Button(label="Поиск", emoji=search_icon,
                                  custom_id=f"sd:mk:search:{state.token()}", style=_B)]
     if state.query:
-        actions.append(discord.ui.Button(label="Сбросить поиск",
+        actions.append(discord.ui.Button(label="Сбросить поиск", emoji=button_emoji("search_reset", "✖️"),
                          custom_id=f"sd:mk:list:{MarketView(sort=state.sort).token()}", style=_G))
     if pages > 1:
-        for jump, label in ((-1,"Назад"), (1,"Дальше")):
+        for jump, label, icon, fallback in ((-1, "Назад", "page_prev", "⬅️"),
+                                             (1, "Дальше", "page_next", "➡️")):
             target = page + jump
             key = replace(state, page=target).token() if 0 <= target < pages else label
-            actions.append(discord.ui.Button(label=label, custom_id=f"sd:mk:list:{key}",
+            actions.append(discord.ui.Button(label=label, emoji=button_emoji(icon, fallback),
+                                            custom_id=f"sd:mk:list:{key}",
                                             style=_G, disabled=not 0 <= target < pages))
     rows_ui.extend([actions, ["rolecreate", "roles"]])
     await send_card(inter, e, "shop", rows=rows_ui, allowed_mentions=discord.AllowedMentions.none())
@@ -467,12 +472,18 @@ async def my_roles(inter: discord.Interaction):
     await inventory_roles(inter)
 
 
-ROLE_FILTERS = {"all": "Все роли", "worn": "Надеты", "mine": "Мои", "bought": "Куплены"}
+ROLE_FILTERS = {
+    "all": ("Все роли", "inventory_roles", "🎭"),
+    "worn": ("Надеты", "filter_worn", "👕"),
+    "mine": ("Мои", "filter_created", "⭐"),
+    "bought": ("Куплены", "filter_bought", "🛍️"),
+}
 ROLE_PAGE_SIZE = 8
 
 
-def inventory_page_button(filter_key, page, label, *, disabled):
-    return discord.ui.Button(label=label, custom_id=f"sd:inv:roles:{filter_key}:{page}",
+def inventory_page_button(filter_key, page, label, icon, fallback, *, disabled):
+    return discord.ui.Button(label=label, emoji=button_emoji(icon, fallback),
+                             custom_id=f"sd:inv:roles:{filter_key}:{page}",
                              style=_G, disabled=disabled)
 
 
@@ -511,19 +522,21 @@ async def inventory_roles(inter: discord.Interaction, filter_key="all", page=0):
             f"\n\n{role_text}\n\n-# Страница {page + 1} из {total_pages}")
     filters = discord.ui.Select(
         custom_id="sd:inv:filter", placeholder="Показать роли",
-        options=[discord.SelectOption(label=label, value=key, default=key == filter_key)
-                 for key, label in ROLE_FILTERS.items()])
+        options=[discord.SelectOption(label=label, value=key, default=key == filter_key,
+                                      emoji=button_emoji(icon, fallback))
+                 for key, (label, icon, fallback) in ROLE_FILTERS.items()])
     rows = [[btn("inventory", "Роли"), btn("inv:rings", style=_G)], [filters]]
     if visible:
         rows.append([discord.ui.Select(
             custom_id=f"sd:mk:mine:{filter_key}:{page}", placeholder="Выбери роль",
             options=[discord.SelectOption(label=r["name"][:100], value=str(r["id"]),
-                                          emoji=icon_emoji("⭐") if r["owner_id"] == uid else None)
+                                          emoji=(button_emoji("filter_created", "⭐") if r["owner_id"] == uid
+                                                 else button_emoji("filter_bought", "🛍️")))
                      for r in visible])])
     actions = []
     if total_pages > 1:
-        actions = [inventory_page_button(filter_key, max(page - 1, 0), "◀", disabled=page == 0),
-                   inventory_page_button(filter_key, page + 1, "▶", disabled=page + 1 == total_pages)]
+        actions = [inventory_page_button(filter_key, max(page - 1, 0), "Назад", "page_prev", "◀️", disabled=page == 0),
+                   inventory_page_button(filter_key, page + 1, "Дальше", "page_next", "▶️", disabled=page + 1 == total_pages)]
     rows.append(actions + ["rolecreate", "market"])
     await send_card(inter, embed("🎒 Инвентарь · Роли", desc), "inv", rows=rows,
                     allowed_mentions=discord.AllowedMentions.none())
@@ -573,7 +586,8 @@ def inventory_view(parts):
 def inventory_back(state):
     if state is None:
         return "roles"
-    return discord.ui.Button(label="К списку", custom_id=f"sd:inv:roles:{state[0]}:{state[1]}", style=_G)
+    return discord.ui.Button(label="К списку", emoji=button_emoji("back_to_list", "📖"),
+                             custom_id=f"sd:inv:roles:{state[0]}:{state[1]}", style=_G)
 
 
 async def show_mine(inter: discord.Interaction, ref: int, state=None):
@@ -587,7 +601,9 @@ async def show_mine(inter: discord.Interaction, ref: int, state=None):
     info = [f"Цвет: **{color_of(r)}**", f"Сейчас: **{'надета' if r['worn'] else 'снята'}**"]
     btn = []
     btn.append(discord.ui.Button(label="Снять" if r["worn"] else "Надеть",
-                                 emoji=icon_emoji("👕"), style=discord.ButtonStyle.secondary,
+                                 emoji=(button_emoji("cancel", "✖️") if r["worn"]
+                                        else button_emoji("filter_worn", "👕")),
+                                 style=discord.ButtonStyle.secondary,
                                  custom_id=f"sd:mk:{'off' if r['worn'] else 'on'}:{ref}{suffix}"))
     if own:
         info.append(f"Продаж: **{r['sold']}** · заработано: **{fmt(r['earned'])}**")
@@ -598,7 +614,7 @@ async def show_mine(inter: discord.Interaction, ref: int, state=None):
                                          custom_id=f"sd:mk:sell:{ref}{suffix}"))
         else:
             info.append(f"В магазине за **{fmt(r['price'])}**")
-            price_icon = discord.PartialEmoji.from_str(button_icon("role_price_change") or "🏷️")
+            price_icon = button_emoji("role_price_change", "🏷️")
             btn.append(discord.ui.Button(label="Изменить цену", emoji=price_icon,
                                          style=discord.ButtonStyle.primary,
                                          custom_id=f"sd:mk:sell:{ref}{suffix}"))

@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 
 from .core import wrong_channel, E, card_name, BUTTONS, DAILY_REWARD, after_action, ECON_LOCK, RED, bot, fmt, reply, send_card, too_fast
-from .core import btn, button_icon, fmt_time, member_name, send_panel, _OK, _G
+from .core import btn, button_emoji, fmt_time, member_name, send_panel, _OK, _G
 from .achievements import ACHIEVEMENTS, achievements, get_stats
 from .economy import DAY, balance, daily, profile
 from .games import coinflip, duel
@@ -97,13 +97,9 @@ def short_time(sec: int) -> str:
 def sections_select() -> discord.ui.Select:
     opts = []
     for key, label, desc in SECTIONS:
-        icon = BUTTONS[key][2] if key in BUTTONS else ""
-        emo = button_icon(icon)
-        try:
-            emo = discord.PartialEmoji.from_str(emo) if emo else None
-        except Exception:
-            emo = None
-        opts.append(discord.SelectOption(label=label, value=key, description=desc, emoji=emo))
+        _, fallback, icon, _ = BUTTONS[key]
+        opts.append(discord.SelectOption(label=label, value=key, description=desc,
+                                         emoji=button_emoji(icon, fallback)))
     return discord.ui.Select(custom_id="sd:sections", placeholder="Все разделы двора…", options=opts)
 
 

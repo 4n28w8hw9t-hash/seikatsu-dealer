@@ -429,6 +429,8 @@ class ConfirmReset(discord.ui.View):
     def __init__(self, panel: StaffView):
         super().__init__(timeout=120)
         self.panel = panel
+        self.yes.emoji = em("adm_burn", "♻️")
+        self.no.emoji = em("cancel", "✖️")
 
     async def interaction_check(self, inter: discord.Interaction) -> bool:
         return await self.panel.interaction_check(inter)

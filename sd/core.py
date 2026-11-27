@@ -145,11 +145,11 @@ BUTTONS = {
     "showcase": ("Витрина", "🏅", "showcase", _B),
     "inv:rings": ("Кольца", "💍", "ring", _B),
     "quests": ("Поручения", "📜", "quest_book", _B),
-    "quests:reminder": ("Напоминание", "🔔", "hourglass", _G),
-    "onboarding": ("Первый день", "📜", "quest_book", _B),
-    "event": ("Событие двора", "🏆", "trophy", _B),
-    "event:claim": ("Взять памятный знак", "🏅", "top", _OK),
-    "season:archive": ("Архив сезонов", "📖", "history", _G),
+    "quests:reminder": ("Напоминание", "🔔", "quest_reminder", _G),
+    "onboarding": ("Первый день", "📜", "court_first_day", _B),
+    "event": ("Событие двора", "🏆", "court_event", _B),
+    "event:claim": ("Взять памятный знак", "🏅", "court_event_badge", _OK),
+    "season:archive": ("Архив сезонов", "📖", "season_archive", _G),
     "quests:claim": ("Забрать награду", "🎁", "quest_reward_claim", _OK),
     "anniversary": ("Годовщина", "🏅", "anniversary", _B),
     "anniversary:celebrate": ("Отпраздновать", "🎉", "win", _OK),
@@ -216,6 +216,8 @@ BUTTON_ICON_FALLBACKS = {
     "ring_collection": "ring", "ring_gift": "gift",
     "anniversary": "top", "role_create": "skill",
     "pair_xp_claim": "gift", "quest_reward_claim": "gift", "role_price_change": "tag",
+    "quest_reminder": "hourglass", "court_first_day": "quest_book", "court_first_badge": "ach_first",
+    "court_event": "trophy", "court_event_badge": "trophy", "season_archive": "history",
 }
 
 
@@ -224,15 +226,16 @@ def button_icon(icon: str) -> str:
     return E(f"sd_{icon}") or (E(f"sd_{fallback}") if fallback else "")
 
 
-def make_button(key: str) -> discord.ui.Button:
-    label, emo, icon, style = BUTTONS[key]
+def button_emoji(icon: str, fallback: str | discord.PartialEmoji):
+    """Возвращает загруженную иконку для кнопки или пункта меню."""
     custom = button_icon(icon)
-    if custom:
-        try:
-            emo = discord.PartialEmoji.from_str(custom)
-        except Exception:
-            pass
-    return discord.ui.Button(label=label, emoji=emo, style=style, custom_id=f"sd:{key}")
+    return discord.PartialEmoji.from_str(custom) if custom else fallback
+
+
+def make_button(key: str) -> discord.ui.Button:
+    label, fallback, icon, style = BUTTONS[key]
+    return discord.ui.Button(label=label, emoji=button_emoji(icon, fallback),
+                             style=style, custom_id=f"sd:{key}")
 
 
 def _file(image) -> discord.File:
