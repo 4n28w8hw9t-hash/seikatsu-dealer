@@ -169,7 +169,11 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     except Exception:
         avatar = None
     from .showcase import badge, selection
-    from .winter_state import cosmetics
+    from .marriage import get_rings, ring_items
+    from .winter_state import cosmetics, first
+    data["rings"] = ring_items(await get_rings(g, m.id))
+    if await first(bot.db, "SELECT 1 FROM winter26_rings WHERE g=? AND u=?", (g, m.id)):
+        data["rings"].append(("Зимняя луна", "wb_rings"))
     data["skin"], data["frame"] = await cosmetics(bot.db,g,m.id)
     preview = inter.extras.get("snow_preview")
     if preview in ("lace","aurora"): data["frame"]=preview
@@ -181,7 +185,7 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     if m.id == inter.user.id:
         actions.append("inventory")
         extras.insert(0, "showcase")
-        extras.append("wb:dress")
+        extras.extend(["ringbook", "wb:dress"])
     rows = [actions, extras, "---", ["menu"]]
     if preview: rows=[["wb:item"+preview,"wb:store"]]
     try:
@@ -196,6 +200,8 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     for cell in data["cells"]:
         n, v = cell[:2]
         e.add_field(name=n, value=v)
+    if data["rings"]:
+        e.add_field(name="Коллекция колец", value=" · ".join(name for name, _ in data["rings"]), inline=False)
     if data["showcase"]:
         e.add_field(name="Витрина", value=" · ".join(label for _, label, _, _ in data["showcase"]), inline=False)
     await reply(inter, embed=e, rows=rows, nav=False)
