@@ -1,7 +1,7 @@
 """New-member checklist started by accepting the court rules."""
 import time
 
-from .core import AFTER_ACTION, bot, embed, send_card
+from .core import AFTER_ACTION, bot, button_icon, embed, send_card
 
 BADGE = "court:first_day"
 
@@ -60,4 +60,5 @@ async def show(inter):
             rows.append(["showcase"])
     else:
         text = "Первый день начинается после принятия устава."
-    await send_card(inter, embed("Первый день при дворе", text), "welcome", rows=rows)
+    title = f"{button_icon('court_first_day') or '📜'} Первый день при дворе"
+    await send_card(inter, embed(title, text), "welcome", rows=rows)

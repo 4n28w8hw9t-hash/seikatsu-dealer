@@ -17,9 +17,9 @@ def badge(key):
         place = int(ident)
         return SEASON_LABELS[place - 1], f"top_{place}", ("🥇", "🥈", "🥉")[place - 1]
     if key == "court:first_day":
-        return "Первый день при дворе", "ach_first", "📜"
+        return "Первый день при дворе", "court_first_badge", "📜"
     if key == "court:event":
-        return "Общее дело", "trophy", "🏆"
+        return "Общее дело", "court_event_badge", "🏆"
     if key == "pair:weekly":
         return "Союз двора", "pair_medal", "💞"
     raise ValueError(key)
@@ -90,7 +90,7 @@ async def save(inter, values=(), *, toggle=None):
 
 def badge_emoji(key):
     _, icon, fallback = badge(key)
-    return E(f"sd_{icon}", E("sd_couple", fallback) if key == "pair:weekly" else fallback)
+    return button_icon(icon) or (E("sd_couple", fallback) if key == "pair:weekly" else fallback)
 
 
 async def show(inter: discord.Interaction, notice=""):

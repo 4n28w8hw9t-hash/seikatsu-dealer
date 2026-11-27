@@ -2,7 +2,7 @@
 (banners/top_lvl, banners/top_coin; пока их нет — общий баннер «top»)."""
 import discord
 
-from .core import _B, _G, RED, E, bot, btn, button_icon, embed, send_card
+from .core import _B, _G, RED, E, bot, btn, button_emoji, button_icon, embed, send_card
 from .levels import get_path, is_female, level_of, rank_of
 from .season import month_window, ranked as season_ranked
 
@@ -90,8 +90,9 @@ async def show_archive(inter, month=""):
     ) as cur:
         months = [value for (value,) in await cur.fetchall()]
     rows = [["top:season"]]
+    title = f"{button_icon('season_archive') or '📖'} Архив сезонов"
     if not months:
-        return await send_card(inter, embed("Архив сезонов", "Первый завершённый сезон появится здесь."),
+        return await send_card(inter, embed(title, "Первый завершённый сезон появится здесь."),
                                "top_lvl", rows=rows)
     month = month if month in months else months[0]
     async with bot.db.execute(
@@ -113,9 +114,11 @@ async def show_archive(inter, month=""):
     own = results.get(inter.user.id, (dict(awards).get(inter.user.id), None))[0]
     lines.append(f"\nТвоё место: **#{own}**" if own else "\nЛичного места в архиве нет.")
     rows.insert(0, [discord.ui.Select(custom_id="sd:season:archive", placeholder="Выбери месяц", options=[
-        discord.SelectOption(label=month_label(value), value=value, default=value == month) for value in months
+        discord.SelectOption(label=month_label(value), value=value, default=value == month,
+                             emoji=button_emoji("season_archive", "📖"))
+        for value in months
     ])])
-    await send_card(inter, embed("Архив сезонов", "\n".join(lines)), "top_lvl", rows=rows,
+    await send_card(inter, embed(title, "\n".join(lines)), "top_lvl", rows=rows,
                     allowed_mentions=discord.AllowedMentions.none())
 
 

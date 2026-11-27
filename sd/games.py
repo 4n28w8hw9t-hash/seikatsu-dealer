@@ -5,7 +5,7 @@ import random
 import discord
 from discord import app_commands
 
-from .core import ECON_LOCK, bot, card_name, embed, fmt, reply, send_card, send_public
+from .core import ECON_LOCK, bot, button_emoji, card_name, embed, fmt, reply, send_card, send_public
 
 
 # ═════════ Монетка ═════════
@@ -41,6 +41,8 @@ class DuelView(discord.ui.View):
         self.a, self.b, self.bet = a, b, bet   # b = None — открытая дуэль, принять может любой
         self.open = b is None
         self.message = None
+        self.accept.emoji = button_emoji("duel_accept", "⚔️")
+        self.decline.emoji = button_emoji("duel_decline", "✖️")
         if self.open:
             self.decline.label = "Отменить"
 

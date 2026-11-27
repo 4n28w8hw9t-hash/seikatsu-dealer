@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 
 import art
-from .core import ECON_LOCK, E, bot, bot_channel, card_name, embed, fmt, member_name, reply, send_card, send_public
+from .core import ECON_LOCK, E, bot, bot_channel, button_emoji, card_name, embed, fmt, member_name, reply, send_card, send_public
 from .ledger import record as ledger_record
 from .levels import level_of, xp_for
 
@@ -102,7 +102,7 @@ def ring_action_select(current: str | None, couple_owned: set[str]) -> discord.u
     options = []
     for key, (name, price, _) in RINGS.items():
         if key not in couple_owned and key != current:
-            emoji = discord.PartialEmoji.from_str(ring_emo(key))
+            emoji = button_emoji("buy", "🛒")
             options.append(discord.SelectOption(
                 label=f"Купить: {name}", value=f"buy:{key}",
                 description=f"{price:,} монет".replace(",", " "), emoji=emoji))
@@ -286,6 +286,8 @@ class MarryView(discord.ui.View):
         self.a, self.b, self.ring = a, b, ring
         self.message = None
         self.done = False
+        self.accept.emoji = button_emoji("marry_accept", "💞")
+        self.decline.emoji = button_emoji("marry_decline", "💔")
 
     def card(self, text: str, color=discord.Color.from_rgb(209, 53, 57)) -> discord.Embed:
         e = embed("💍 Предложение", text, color)
@@ -299,7 +301,7 @@ class MarryView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Согласиться", emoji="💞", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Согласиться", style=discord.ButtonStyle.success)
     async def accept(self, inter: discord.Interaction, button: discord.ui.Button):
         await inter.response.defer()
         async with ECON_LOCK:
@@ -482,7 +484,8 @@ async def anniversary(inter: discord.Interaction, *, celebrate=False, milestone:
     if available:
         rows.insert(0, [discord.ui.Select(
             custom_id="sd:anniversary:pick", placeholder="Какую годовщину отпраздновать?",
-            options=[discord.SelectOption(label=f"{target} дней вместе", value=str(target))
+            options=[discord.SelectOption(label=f"{target} дней вместе", value=str(target),
+                                           emoji=button_emoji("anniversary", "🏅"))
                      for target in available])])
     await send_card(inter, embed("🏅 Годовщины пары", text), "marry", rows=rows)
 

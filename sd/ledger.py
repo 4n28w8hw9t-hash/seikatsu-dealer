@@ -4,14 +4,14 @@ import time
 import discord
 from discord import app_commands
 
-from .core import bot, button_icon, embed, fmt, send_card
+from .core import bot, button_emoji, button_icon, embed, fmt, send_card
 
 PAGE_SIZE = 8
 FILTERS = {
-    "all": ("Все операции", ""),
-    "income": ("Приход", " AND amount>0"),
-    "expense": ("Расход", " AND amount<0"),
-    "purchases": ("Покупки", " AND kind IN ('role_buy','role_create','ring','room_name')"),
+    "all": ("Все операции", "", "history", "📒"),
+    "income": ("Приход", " AND amount>0", "filter_income", "⬇️"),
+    "expense": ("Расход", " AND amount<0", "filter_expense", "⬆️"),
+    "purchases": ("Покупки", " AND kind IN ('role_buy','role_create','ring','room_name')", "filter_purchase", "🛍️"),
 }
 KINDS = {
     "transfer": "Перевод", "duel": "Дуэль", "flip": "Монетка",
@@ -69,14 +69,17 @@ async def show(inter: discord.Interaction, before: int | None = None, category="
     summary = f"**Неделя · +{fmt(income)} / −{fmt(expense)}**"
     content = summary + "\n\n" + content
     filters = discord.ui.Select(custom_id="sd:history:filter", placeholder="Фильтр операций", options=[
-        discord.SelectOption(label=label, value=key, default=key == category)
-        for key, (label, _) in FILTERS.items()
+        discord.SelectOption(label=label, value=key, default=key == category,
+                             emoji=button_emoji(icon, fallback))
+        for key, (label, _, icon, fallback) in FILTERS.items()
     ])
     buttons = []
     if before is not None:
-        buttons.append(discord.ui.Button(label="К последним", custom_id=f"sd:history:{category}"))
+        buttons.append(discord.ui.Button(label="К последним", emoji=button_emoji("history", "📒"),
+                                         custom_id=f"sd:history:{category}"))
     if len(entries) > PAGE_SIZE:
-        buttons.append(discord.ui.Button(label="Раньше", custom_id=f"sd:history:{category}:{entries[PAGE_SIZE - 1][0]}"))
+        buttons.append(discord.ui.Button(label="Раньше", emoji=button_emoji("page_prev", "⬅️"),
+                                         custom_id=f"sd:history:{category}:{entries[PAGE_SIZE - 1][0]}"))
     icon = button_icon("history") or "📒"
     await send_card(inter, embed(f"{icon} История монет", content), "balance",
                     rows=[[filters], buttons] if buttons else [[filters]], ephemeral=True,
