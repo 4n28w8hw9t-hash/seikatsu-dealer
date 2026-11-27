@@ -630,6 +630,8 @@ class EconomyBot(commands.Bot):
                 PRIMARY KEY(guild_id,user_id)
             );
         """)
+        from .winter_state import SCHEMA as winter_schema
+        await self.db.executescript(winter_schema)
         # банка больше нет: всё, что лежало в нём, переходит на баланс
         await self.db.execute("UPDATE users SET balance=balance+bank, bank=0 WHERE bank>0")
         await self.db.commit()

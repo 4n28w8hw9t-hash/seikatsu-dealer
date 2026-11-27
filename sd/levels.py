@@ -205,7 +205,8 @@ async def tick():
     from .marriage import clean_pending_rooms, clean_retired_rooms, clean_rooms
     from .season import close_seasons
     from .reminders import send_due
-    for job in (clean_pending_rooms, clean_rooms, clean_retired_rooms, recover_role_purchases, close_seasons, send_due):
+    from .winter_state import deliver_gifts
+    for job in (deliver_gifts, clean_pending_rooms, clean_rooms, clean_retired_rooms, recover_role_purchases, close_seasons, send_due):
         try:
             await job()
         except Exception as ex:

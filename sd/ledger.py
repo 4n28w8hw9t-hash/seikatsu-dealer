@@ -14,6 +14,7 @@ FILTERS = {
     "purchases": ("Покупки", " AND kind IN ('role_buy','role_create','ring','room_name')", "filter_purchase", "🛍️"),
 }
 KINDS = {
+    "winter": "Бал зимней луны",
     "transfer": "Перевод", "duel": "Дуэль", "flip": "Монетка",
     "daily": "Ежедневная награда", "work": "Жалованье",
     "quests": "Поручения двора", "achievement": "Достижение",

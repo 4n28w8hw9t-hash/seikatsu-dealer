@@ -169,6 +169,8 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     except Exception:
         avatar = None
     from .showcase import badge, selection
+    from .winter_state import cosmetics
+    data["skin"], data["frame"] = await cosmetics(bot.db,g,m.id)
     data["showcase"] = [(key, *badge(key)) for key in await selection(g, m.id)]
     banners = getattr(bot, "banners", {})
     actions = ["work", "path", "ach", "couple"]
@@ -176,6 +178,7 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     if m.id == inter.user.id:
         actions.append("inventory")
         extras.insert(0, "showcase")
+        extras.append("wb:dress")
     rows = [actions, extras, "---", ["menu"]]
     try:
         png = await asyncio.to_thread(

@@ -20,6 +20,12 @@ def badge(key):
         return "Первый день при дворе", "court_first_badge", "📜"
     if key == "court:event":
         return "Общее дело", "court_event_badge", "🏆"
+    if category == "winter":
+        from .winter_state import SIGILS
+        if ident == "rings":
+            return "Кольца Зимней луны", "wb_rings", "💍"
+        if ident in ("0","1","2","3"):
+            return SIGILS[int(ident)], "wb_boss"+ident, "❄️"
     if key == "pair:weekly":
         return "Союз двора", "pair_medal", "💞"
     raise ValueError(key)
@@ -47,6 +53,12 @@ async def earned(guild_id, uid, *, db=None):
                           (guild_id, uid)) as cur:
         if await cur.fetchone():
             keys.append("court:event")
+    from .winter_state import first, progress, targets
+    goals = await targets(db,guild_id)
+    totals, mine = await progress(db,guild_id,uid)
+    keys.extend(f"winter:{i}" for i,n in enumerate(mine) if n and totals[i]>=goals[i])
+    if await first(db,"SELECT 1 FROM winter26_rings WHERE g=? AND u=?",(guild_id,uid)):
+        keys.append("winter:rings")
     return keys
 
 

@@ -320,7 +320,7 @@ def _char_for(banner_path):
     return Image.open(p).convert("RGBA") if os.path.exists(p) else None
 
 
-def _portrait(img, banner_path, zone):
+def _portrait(img, banner_path, zone, *, skin=""):
     """Персонаж в своей левой зоне карточки (не заходит на текст). Возвращает x начала текста."""
     W, H = img.size
     char = _char_for(banner_path)
@@ -331,7 +331,7 @@ def _portrait(img, banner_path, zone):
         layer = Image.new("RGBA", (zone, H), (0, 0, 0, 0))
         layer.paste(c, (x, 24), c)
         img.paste(layer, (0, 0), layer)
-    elif banner_path and os.path.exists(banner_path):   # запасной вариант: кусок баннера
+    elif not skin and banner_path and os.path.exists(banner_path):   # запасной вариант: кусок баннера
         b = Image.open(banner_path).convert("RGB")
         part = b.crop((14, 14, 14 + round(zone * (b.height - 28) / H), b.height - 14))
         part = part.resize((zone, H), Image.LANCZOS)
@@ -339,7 +339,7 @@ def _portrait(img, banner_path, zone):
     else:
         return 40
     d = ImageDraw.Draw(img)
-    d.rectangle([zone, 0, W, H], fill=(16, 5, 8))       # спокойный фон под текстом
+    d.rectangle([zone, 0, W, H], fill={"hall": (12,22,44), "night": (8,31,38)}.get(skin,(16,5,8)))       # спокойный фон под текстом
     d.line([(zone, 18), (zone, H - 18)], fill=P_GOLD_D, width=2)
     d.polygon([(zone, H // 2 - 8), (zone + 8, H // 2), (zone, H // 2 + 8), (zone - 8, H // 2)], fill=P_GOLD)
     return zone + 34
@@ -377,14 +377,14 @@ def _bar(d, x0, y, x1, have, need, label):
     return y + 16
 
 
-def _cells(img, d, cells, x0, y, x1, cols, h=74, gap=12):
+def _cells(img, d, cells, x0, y, x1, cols, h=74, gap=12, panel=P_PANEL):
     cw = (x1 - x0 - gap * (cols - 1)) / cols
     for i, cell in enumerate(cells):
         label, value = cell[:2]
         icon = cell[2] if len(cell) > 2 else None
         cx = x0 + (i % cols) * (cw + gap)
         cy = y + (i // cols) * (h + gap)
-        d.rounded_rectangle([cx, cy, cx + cw, cy + h], radius=8, fill=P_PANEL)
+        d.rounded_rectangle([cx, cy, cx + cw, cy + h], radius=8, fill=panel)
         d.rectangle([cx, cy + 10, cx + 3, cy + h - 10], fill=P_GOLD)
         badge = _icon(icon, 36) if icon else None
         text_w = cw - (70 if badge else 28)
@@ -399,11 +399,37 @@ def _cells(img, d, cells, x0, y, x1, cols, h=74, gap=12):
 def profile_card(banner_path, data: dict, avatar: bytes | None = None,
                  W: int = 1000, H: int = 600) -> bytes:
     """Профиль: персонаж слева, аватар, имя, титул, опыт и карточки характеристик."""
-    img = _pbg(W, H)
-    tx = _portrait(img, banner_path, 360)
+    skin = data.get("skin", "")
+    if skin:
+        y, x = _np.mgrid[:H,:W]
+        glow = _np.exp(-((x-W*.20)/(W*.29))**2 - ((y-H*.32)/(H*.70))**2)
+        if skin == "night":
+            glow *= .55 + .45*_np.sin(x/68 + y/107)**2
+        base, light = ((8,17,36),(47,78,118)) if skin == "hall" else ((5,21,31),(33,105,99))
+        rgb = _np.array(base) + glow[...,None]*(_np.array(light)-base)
+        img = Image.fromarray(rgb.astype("uint8"), "RGB")
+        sky = ImageDraw.Draw(img)
+        rng = _np.random.default_rng(26)
+        for sx, sy in zip(rng.integers(12,350,65),rng.integers(16,H-18,65)):
+            sky.ellipse((sx,sy,sx+2,sy+2),fill=(164,190,210))
+        if skin == "hall":
+            sky.ellipse((45,43,111,109),fill=(198,215,228))
+            sky.ellipse((64,36,127,99),fill=(35,57,87))
+    else:
+        img = _pbg(W, H)
+    tx = _portrait(img, banner_path, 360, skin=skin)
     d = ImageDraw.Draw(img)
     right = W - 34
     _avatar(img, avatar, (tx, 34), 78)
+    frame = data.get("frame")
+    if frame in ("frost", "crown"):
+        rim = _icon("wb_frame", 127)
+        if rim:
+            img.paste(rim,(tx-24,9),rim)
+        if frame == "crown":
+            crown = _icon("wb_crown",40)
+            if crown:
+                img.paste(crown,(tx+19,10),crown)
     nx = tx + 100
     name, f = _pfit(d, str(data["name"]), "sc", 52, right - nx, 24)
     _shadow_text(d, (nx, 26), name, f, P_CREAM)
@@ -412,7 +438,8 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
     _t(d, (nx, 86), head, f, P_GOLD)
     y = _bar(d, tx, 140, right, data["have"], max(1, data["need"]),
              f"Опыт {data['have']:,} / {data['need']:,}".replace(",", " "))
-    _cells(img, d, data["cells"], tx, y + 22, right, cols=2)
+    _cells(img, d, data["cells"], tx, y + 22, right, cols=2,
+           panel={"hall": (25,40,65), "night": (15,52,55)}.get(skin,P_PANEL))
     badges = data.get("showcase") or []
     if badges:
         gap = 10
@@ -454,7 +481,11 @@ def couple_card(banner_path, data: dict, avatar_a: bytes | None = None,
     size = 92
     _avatar(img, avatar_a, (mid - size - 38, 30), size)
     _avatar(img, avatar_b, (mid + 38, 30), size)
-    _heart(d, mid, 70, 20, P_GOLD)
+    rings = _icon("wb_rings", 68) if data.get("moon_rings") else None
+    if rings:
+        img.paste(rings, (mid-34,38), rings)
+    else:
+        _heart(d, mid, 70, 20, P_GOLD)
     names = " & ".join(str(n) for n in data["names"])
     names, f = _pfit(d, names, "sc", 44, right - tx, 22)
     _shadow_text(d, (mid - _tl(d, names, f) / 2, 136), names, f, P_CREAM)
