@@ -47,9 +47,9 @@ CREATE TABLE IF NOT EXISTS winter26_gifts (g INTEGER,u INTEGER,recipient INTEGER
 
 
 SANTA = {
-    "rose": ("Роза под снегом", "rose", "Пусть даже в стужу рядом будет тот, кто согреет."),
-    "chime": ("Бубенец бала", "quest_reminder", "Пусть новый год принесёт вести, от которых хочется танцевать."),
-    "book": ("Книга пожеланий", "quest_book", "Пусть самая смелая мечта найдёт место в твоей летописи."),
+    "rose": ("Роза под снегом", "wb_snow_rose", "Пусть даже в стужу рядом будет тот, кто согреет."),
+    "chime": ("Бубенец бала", "wb_ball_chime", "Пусть новый год принесёт вести, от которых хочется танцевать."),
+    "book": ("Книга пожеланий", "wb_wish_book", "Пусть самая смелая мечта найдёт место в твоей летописи."),
 }
 SCHEMA += """
 CREATE TABLE IF NOT EXISTS winter26_parcels (g INTEGER,u INTEGER,keepsake TEXT NOT NULL,prepaid INTEGER NOT NULL,PRIMARY KEY(g,u));
