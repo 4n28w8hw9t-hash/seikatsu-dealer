@@ -149,6 +149,7 @@ BUTTONS = {
     "onboarding": ("Первый день", "📜", "court_first_day", _B),
     "event": ("Событие двора", "🏆", "court_event", _B),
     "event:claim": ("Взять памятный знак", "🏅", "court_event_badge", _OK),
+    "event:help": ("Чем помочь", "📜", "quest_book", _B),
     "season:archive": ("Архив сезонов", "📖", "season_archive", _G),
     "quests:claim": ("Забрать награду", "🎁", "quest_reward_claim", _OK),
     "anniversary": ("Годовщина", "🏅", "anniversary", _B),

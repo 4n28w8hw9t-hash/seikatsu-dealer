@@ -17,6 +17,12 @@ def event_window(now=None):
     return day.strftime("%Y-%m"), int(end.timestamp()), day.day < 8
 
 
+def progress_line(label, points, goal):
+    filled = min(points, goal) * 10 // goal
+    bar = "▰" * filled + "▱" * (10 - filled)
+    return f"**{label}** · **{points}/{goal}**\n{bar}"
+
+
 async def record_contribution(db, guild_id, user_id, now=None):
     month, _, active = event_window(now)
     if active:
@@ -36,25 +42,40 @@ async def event_progress(db, guild_id, month, user_id):
         return await cur.fetchone()
 
 
-async def show(inter, notice=""):
-    month, ends, active = event_window()
+async def show(inter, notice="", *, show_help=False):
+    now = datetime.now(COURT_TZ)
+    month, ends, active = event_window(now.timestamp())
+    next_month = now.replace(year=now.year + (now.month == 12), month=now.month % 12 + 1,
+                             day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_start = int(next_month.timestamp())
     total, personal, claimed = await event_progress(bot.db, inter.guild_id, month, inter.user.id)
     lines = [
         f"**Общее дело · {month}**",
-        f"Вклад двора **{total}/{GOAL}** · твой вклад **{personal}/{PERSONAL_GOAL}**",
+        "",
+        progress_line("Весь двор", total, GOAL),
+        progress_line("Твой вклад", personal, PERSONAL_GOAL),
+        "",
     ]
     rows = []
     if active:
-        lines.extend((f"Первые семь дней месяца. Вклад принимается до <t:{ends}:F>.",
-                      "Работа и ежедневная награда дают по одному вкладу."))
-        rows.append(["work", "daily"])
+        lines.append(f"**Сбор открыт** до <t:{ends}:F> (<t:{ends}:R>).")
     else:
-        lines.append("Сбор вклада завершён. Следующее событие начнётся 1-го числа.")
+        result = "Двор достиг общей цели." if total >= GOAL else "Двор не достиг общей цели."
+        lines.extend((f"**Итоги события.** {result}", f"Следующий сбор откроется <t:{next_start}:F>."))
     if claimed:
-        lines.append("Памятный знак уже доступен в Витрине.")
+        lines.append("Твой памятный знак уже в Витрине.")
+        rows.append(["showcase"])
     elif total >= GOAL and personal >= PERSONAL_GOAL:
+        lines.append(f"Твой знак готов. Его можно забрать до <t:{next_start}:F>.")
         rows.append(["event:claim"])
-        lines.append("Цель достигнута. Забери памятный знак до конца месяца.")
+    elif not active:
+        reason = "Не хватило личного вклада." if total >= GOAL else "Для знака нужна общая победа двора."
+        lines.append(reason)
+    if active and show_help:
+        lines.extend(("", "**Чем помочь двору**", "Служба и ежедневная награда дают по одному вкладу."))
+        rows.append(["work", "daily"])
+    elif active and not rows:
+        rows.append(["event:help"])
     if notice:
         lines.extend(("", notice))
     title = f"{button_icon('court_event') or '🏆'} Событие двора"
