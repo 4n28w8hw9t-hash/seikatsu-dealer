@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 
 import art
 
-from . import winter_state as w
+from . import snow_court, winter_state as w
 from .core import _B, _G, _OK, BUTTONS, bot, btn, reply
 from .winter_snow import snowfall
 
@@ -22,7 +22,7 @@ ACTIONS = {
     "santa": ("Тайный Санта", "🎁", "santa"),
     "offer": ("Положить подарок", "🎁", "santa"),
     "shop": ("Лавка", "❄️", "flake"),
-    "buy": ("Купить за 80 ❄", "❄️", "flake"),
+    "buy": ("Северная ночь · 80 ❄", "❄️", "flake"),
     "game": ("Загадка дня", "🃏", "game"),
     "pair": ("Парное поручение", "💍", "rings"),
     "pairday": ("Выполнить свою часть", "💍", "rings"),
@@ -88,7 +88,8 @@ PAIR_TASKS = (
     "Украсьте ель двумя лунными звёздами.",
 )
 SKINS = {"": "Дворцовая", "hall": "Лунный зал", "night": "Северная ночь"}
-FRAMES = {"": "без рамки", "frost": "Иней", "crown": "Серебряный венец"}
+SKINS["yard"]="Заснеженный двор"
+FRAMES = {"lace":"Морозное кружево","aurora":"Северное сияние","": "без рамки", "frost": "Иней", "crown": "Серебряный венец"}
 
 
 async def show(inter, key="ball"):
@@ -98,6 +99,11 @@ async def show(inter, key="ball"):
     if g is None:
         return await reply(inter, "Бал проходит на сервере.", nav=False, key=None)
     key, _, stamp = key.partition("@")
+    if key in ("raid","strike","counter") and idx is not None:
+        key = "siege"
+    if key == "shop": key = "store"
+    if key in snow_court.NAMES:
+        return await snow_court.show(inter,key,stamp,send=reply)
     expired = key in ("strike", "counter", "answer0", "answer1", "answer2") and stamp != day.isoformat()
     if expired:
         key = PAGES[key]
@@ -137,7 +143,9 @@ async def show(inter, key="ball"):
             lines.append(
                 f"⚔ Урон двора · **{min(totals[idx], goals[idx])}/{goals[idx]}** · Твои выходы · **{mine[idx]}**"
             )
-        actions = [["raid", "archive", "gifts"], ["game", "santa", "pair"], ["shop", "dress"]]
+        banner="siege"
+        lines[1]="Слепи пять снежков и помоги двору отстоять крепость. Подсказка караула укажет, куда бросать."
+        actions = [["wb:pack","wb:siege","wb:duels","wb:store"],["archive","game","santa","wb:relay"],["wb:princess","gifts","dress"]]
     elif page in ("raid", "archive"):
         if page == "raid" and idx is not None:
             image = await asyncio.to_thread(raid_card, idx, totals[idx], mine[idx], goals[idx])
@@ -219,7 +227,7 @@ async def show(inter, key="ball"):
             f"Карточка · **{SKINS[skin]}**   |   Рамка · **{FRAMES[frame]}**",
             "«Иней» — один выход. «Лунный зал» — участие в трёх разных главах. «Серебряный венец» — четыре личных знака победы.",
         ]
-        actions = [["classic", "hall", "night"], ["bare", "frost", "crown"], ["profile", "shop"]]
+        actions = [["classic", "hall", "night", btn("wb:wearyard","Заснеженный двор")], ["bare", "frost", "crown", btn("wb:wearlace","Кружево"),btn("wb:wearaurora","Сияние")], ["profile", "shop"]]
     elif page == "gifts":
         lines = [f"❄ **{flakes}** · Глав с твоим участием **{sum(bool(n) for n in mine)}/4**"]
         for i, mark in enumerate(w.SIGILS):
@@ -227,7 +235,7 @@ async def show(inter, key="ball"):
         lines.append(
             "Финальный сундук · 1 000 монет каждому участнику битвы. Откроется после победы над Королевой или 11 января."
         )
-        actions = [["dress", "showcase"]]
+        actions = [["dress", "showcase","wb:princess","pair"]]
         if not chest and any(mine) and (day >= w.END or totals[3] >= goals[3]):
             actions[0].append("claim")
         if chest:

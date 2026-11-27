@@ -171,6 +171,9 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
     from .showcase import badge, selection
     from .winter_state import cosmetics
     data["skin"], data["frame"] = await cosmetics(bot.db,g,m.id)
+    preview = inter.extras.get("snow_preview")
+    if preview in ("lace","aurora"): data["frame"]=preview
+    if preview=="yard": data["skin"]=preview
     data["showcase"] = [(key, *badge(key)) for key in await selection(g, m.id)]
     banners = getattr(bot, "banners", {})
     actions = ["work", "path", "ach", "couple"]
@@ -180,12 +183,13 @@ async def profile(inter: discord.Interaction, участник: discord.Member |
         extras.insert(0, "showcase")
         extras.append("wb:dress")
     rows = [actions, extras, "---", ["menu"]]
+    if preview: rows=[["wb:item"+preview,"wb:store"]]
     try:
         png = await asyncio.to_thread(
             art.profile_card, banners.get(title_banner(path, lvl, is_female(m)) or "")
             or banners.get("profile")
             or banners.get("help"), data, avatar)
-        return await reply(inter, image=("profile.png", png), rows=rows, nav=False)
+        return await reply(inter, "Примерка · оформление можно приобрести в лавке." if preview else None, image=("profile.png", png), rows=rows, nav=False)
     except Exception as ex:
         print("Карточка профиля не нарисована:", repr(ex))
     e = embed(f"Профиль {m.display_name}", f"**{title}** · уровень **{lvl}** · опыт {have} / {need}")

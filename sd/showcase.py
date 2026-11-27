@@ -22,6 +22,8 @@ def badge(key):
         return "Общее дело", "court_event_badge", "🏆"
     if category == "winter":
         from .winter_state import SIGILS
+        if ident == "snowball": return "Первый снежок", "wb_snowball", "❄️"
+        if ident == "princess": return "Дар Принцессы", "wb_santa", "🎁"
         if ident == "rings":
             return "Кольца Зимней луны", "wb_rings", "💍"
         if ident in ("0","1","2","3"):
@@ -59,6 +61,9 @@ async def earned(guild_id, uid, *, db=None):
     keys.extend(f"winter:{i}" for i,n in enumerate(mine) if n and totals[i]>=goals[i])
     if await first(db,"SELECT 1 FROM winter26_rings WHERE g=? AND u=?",(guild_id,uid)):
         keys.append("winter:rings")
+    from .snowballs import inventory
+    items=await inventory(db,guild_id,uid)
+    keys.extend("winter:"+k for k in ("snowball","princess") if k in items)
     return keys
 
 
