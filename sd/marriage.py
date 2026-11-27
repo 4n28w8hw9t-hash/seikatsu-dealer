@@ -409,14 +409,19 @@ async def couple(inter: discord.Interaction, участник: discord.Member | 
                       ("С", time.strftime("%d.%m.%Y", time.gmtime(mar["since"] + 3 * 3600)))]}
     from .winter_state import pair_days
     data["moon_rings"] = await pair_days(bot.db,inter.guild_id,mar["a"],mar["b"],mar["since"]) >= 3
+    from .winter_state import first
+    data["moon_rings"] = data["moon_rings"] or await first(bot.db,"SELECT COUNT(*)=2 FROM winter26_rings WHERE g=? AND u IN (?,?)",(inter.guild_id,mar["a"],mar["b"]))
+    preview=inter.extras.get("snow_preview")=="rings"
+    if preview: data["moon_rings"]=True
     avs = [await avatar_of(inter.guild, mar["a"]), await avatar_of(inter.guild, mar["b"])]
     mine = inter.user.id in (mar["a"], mar["b"])
     rows = [["loveroom", "pairquest"], ["ringbook", "anniversary", "roomname", "divorce"]] if mine else []
+    if preview: rows=[["wb:itemrings","wb:store"]]
     banners = getattr(bot, "banners", {})
     try:
         png = await asyncio.to_thread(
             art.couple_card, banners.get("marry") or banners.get("help"), data, *avs)
-        return await reply(inter, image=("couple.png", png), rows=rows)
+        return await reply(inter, "Примерка · Кольца Зимней луны" if preview else None, image=("couple.png", png), rows=rows)
     except Exception as ex:
         print("Парная карточка не нарисована:", repr(ex))
     if data["moon_rings"]:

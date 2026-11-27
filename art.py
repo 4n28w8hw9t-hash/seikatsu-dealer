@@ -339,7 +339,7 @@ def _portrait(img, banner_path, zone, *, skin=""):
     else:
         return 40
     d = ImageDraw.Draw(img)
-    d.rectangle([zone, 0, W, H], fill={"hall": (12,22,44), "night": (8,31,38)}.get(skin,(16,5,8)))       # спокойный фон под текстом
+    d.rectangle([zone, 0, W, H], fill={"hall": (12,22,44), "yard": (19,32,51), "night": (8,31,38)}.get(skin,(16,5,8)))       # спокойный фон под текстом
     d.line([(zone, 18), (zone, H - 18)], fill=P_GOLD_D, width=2)
     d.polygon([(zone, H // 2 - 8), (zone + 8, H // 2), (zone, H // 2 + 8), (zone - 8, H // 2)], fill=P_GOLD)
     return zone + 34
@@ -417,13 +417,17 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
             sky.ellipse((64,36,127,99),fill=(35,57,87))
     else:
         img = _pbg(W, H)
+    if skin=="yard":
+        from PIL import ImageOps
+        with Image.open(os.path.join(os.path.dirname(__file__), "winter_art", "courtyard.jpg")) as courtyard:
+            img.paste(ImageOps.fit(courtyard.convert("RGB"), (360,H),centering=(.44,.5)),(0,0))
     tx = _portrait(img, banner_path, 360, skin=skin)
     d = ImageDraw.Draw(img)
     right = W - 34
     _avatar(img, avatar, (tx, 34), 78)
     frame = data.get("frame")
-    if frame in ("frost", "crown"):
-        rim = _icon("wb_frame", 127)
+    if frame in ("frost", "crown","lace","aurora"):
+        rim = _icon("wb_"+frame if frame in ("lace","aurora") else "wb_frame", 127)
         if rim:
             img.paste(rim,(tx-24,9),rim)
         if frame == "crown":
@@ -439,7 +443,7 @@ def profile_card(banner_path, data: dict, avatar: bytes | None = None,
     y = _bar(d, tx, 140, right, data["have"], max(1, data["need"]),
              f"Опыт {data['have']:,} / {data['need']:,}".replace(",", " "))
     _cells(img, d, data["cells"], tx, y + 22, right, cols=2,
-           panel={"hall": (25,40,65), "night": (15,52,55)}.get(skin,P_PANEL))
+           panel={"hall": (25,40,65), "yard": (36,55,77), "night": (15,52,55)}.get(skin,P_PANEL))
     badges = data.get("showcase") or []
     if badges:
         gap = 10

@@ -106,6 +106,7 @@ class WinterBallTests(IsolatedAsyncioTestCase):
 
         async def render(inter, **kw):
             kw.pop("key", None)
+            kw.pop("allowed_mentions", None)
             view, files = core.build_page(**kw)
             for file in files:
                 with Image.open(file.fp) as im:
@@ -123,6 +124,16 @@ class WinterBallTests(IsolatedAsyncioTestCase):
         ):
             for page in (
                 "ball",
+                "siege",
+                "pack",
+                "store",
+                "itemlace",
+                "itemyard",
+                "itemrings",
+                "itemaurora",
+                "duels",
+                "relay",
+                "princess",
                 "archive",
                 "raid",
                 "santa",
@@ -150,3 +161,68 @@ class WinterBallTests(IsolatedAsyncioTestCase):
             pic = Image.open(BytesIO(art.profile_card(str(path), dict(data, skin=skin, frame=frame))))
             variants.append(pic.getpixel((25, 30)))
         self.assertEqual(len(set(variants)), 3)
+
+    async def test_snow_baskets_and_shared_targets(self):
+        from sd import snowballs as snow
+
+        async def launch(u, day, used, choice):
+            async with core.bot.transaction() as db:
+                await w.act(db, 1, u, "ball", day)
+                await snow.pack(db, 1, u, day)
+                return await snow.throw(db, 1, u, day, choice, f"{day}.{u}.{used}")
+
+        for idx in range(4):
+            day = w.START + timedelta(days=7 * idx)
+            for used in range(5):
+                choice = used % 3 if idx == 3 else snow.target(1, 1, day, used)
+                await asyncio.gather(launch(1, day, used, choice), launch(1, day, used, choice))
+                if idx == 0 and used == 2:
+                    msg = await launch(2, day, 0, (snow.target(1, 2, day, 0) + 1) % 3)
+                    self.assertIn("брешь", msg)
+            self.assertEqual((await snow.basket(self.db, 1, 1, day))[0], 5)
+        self.assertEqual(
+            await w.first(self.db, "SELECT flakes FROM winter26_players WHERE g=1 AND u=1", ()), 163
+        )
+        self.assertIn("snowball", await snow.inventory(self.db, 1, 1))
+        self.assertGreater((await snow.fort(self.db, 1, 3))[3], 0)
+        self.assertIn("Обнови", await launch(1, w.END, 0, 0))
+
+    async def test_store_relay_and_princess(self):
+        from sd import snowballs as snow
+
+        async with core.bot.transaction() as db:
+            await w.act(db, 1, 1, "ball", w.START)
+            await db.execute("INSERT INTO marriages VALUES(1,1,2,14)")
+            await db.execute("UPDATE winter26_players SET flakes=460")
+            for step, u in enumerate((1, 2, 2, 1)):
+                await snow.relay(db, 1, u, w.START, f"14.{step}")
+            for key in ("lace", "yard", "aurora", "rings", "rings"):
+                await snow.purchase(db, 1, 1, key, w.START)
+            self.assertEqual(await w.first(db, "SELECT flakes FROM winter26_players WHERE u=1", ()), 0)
+            self.assertEqual(await w.first(db, "SELECT COUNT(*) FROM winter26_rings", ()), 2)
+            await snow.equip(db, 1, 1, "lace")
+            await snow.equip(db, 1, 1, "yard")
+            self.assertEqual(await w.cosmetics(db, 1, 1), ("yard", "lace"))
+            await snow.princess(db, 1, 1, w.START)
+            self.assertNotIn("princess", await snow.inventory(db, 1, 1))
+            await snow.princess(db, 1, 1, w.REVEAL)
+            await snow.princess(db, 1, 1, w.REVEAL)
+            self.assertEqual(await w.first(db, "SELECT SUM(amount) FROM coin_history", ()), 250)
+
+    async def test_three_private_duel_rounds(self):
+        from sd import snowballs as snow
+
+        async with core.bot.transaction() as db:
+            await snow.invite(db, 1, 11, 22, w.START)
+            ident = (await snow.duel(db, 1, 22))[0]
+            await snow.duel_move(db, 1, 11, "accept", f"{ident}.1", -1, w.START)
+            self.assertEqual((await snow.duel(db, 1, 11))[3], "invite")
+            await snow.duel_move(db, 1, 22, "accept", f"{ident}.1", -1, w.START)
+            for turn in range(1, 4):
+                token = f"{ident}.{turn}"
+                await snow.duel_move(db, 1, 11, "move", token, 0, w.START)
+                await snow.duel_move(db, 1, 11, "move", token, 8, w.START)
+                await snow.duel_move(db, 1, 22, "move", token, 3, w.START)
+            result = await snow.duel(db, 1, 22, latest=True)
+            self.assertEqual((result[3], result[7], result[8]), ("done", 3, 0))
+            self.assertIsNone(await snow.duel(db, 1, 11))
