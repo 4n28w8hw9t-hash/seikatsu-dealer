@@ -11,6 +11,7 @@ import art
 
 from . import snowballs as s
 from . import winter_state as w
+from . import winter_guests as guests
 from .core import _B, BUTTONS, bot, btn, button_emoji, reply
 from .winter_snow import snowfall
 
@@ -24,6 +25,11 @@ TARGET_ICONS = (
 )
 
 NAMES = {
+    "journal": ("Журнал Следопыта", "wolf_track"),
+    "clue": ("Осмотреть улику", "wolf_track"),
+    "workshop": ("К ювелиру", "moon_brooch"),
+    "brooch": ("Забрать брошь", "moon_brooch"),
+    "engrave": ("Нанести гравировку", "rings"),
     "siege": ("На осаду", "shield"),
     "pack": ("Слепить снежки", "basket"),
     "duels": ("Вызвать друга", "snowball"),
@@ -173,10 +179,26 @@ async def show(inter, key, stamp="", *, send=None):
                 db, "SELECT count(*)=2 FROM winter26_rings WHERE g=? AND u IN (?,?)", (g, *mar[:2])
             )
         )
+        if key in ("journal", "clue"):
+            story, chapter, choices = await guests.journal(db, g, u, day, stamp if key == "clue" else "")
+        if key in ("workshop", "brooch", "engrave"):
+            pair_rings = rings or (mar and await w.pair_days(db, g, *mar) >= 3)
+            craft, craft_rows = await guests.workshop(db, g, u, key, mar, pair_rings, totals[3] >= goals[3])
     rows = []
     lines = []
     image = None
-    if key in ("siege", "pack") or key.startswith("aim"):
+    if key in ("journal", "clue"):
+        banner, lines = "tracker", story
+        if choices:
+            rows.append([button("clue", label, f"{u}.{chapter}.{i}") for i,label in enumerate(choices)])
+        if idx == 1 and used < 5:
+            direction = s.target(g, u, day, max(used, 0))
+            lines.append(f"Следопыт подносит фонарь к снегу: пар идёт {s.DIRECTIONS[direction]}. Цель следующего броска — **{s.TARGETS[1][direction]}**.")
+        rows.append(["wb:siege", "wb:workshop"])
+    elif key in ("workshop", "brooch", "engrave"):
+        banner, lines, rows = "jeweler", craft, craft_rows
+        rows[0][0] = button("trylace", "Примерить рамку")
+    elif key in ("siege", "pack") or key.startswith("aim"):
         banner = "siege"
         if idx is None:
             lines = ["Четыре осады · 15 декабря — 10 января. Новый противник каждую неделю."]
@@ -217,6 +239,7 @@ async def show(inter, key, stamp="", *, send=None):
                 )
             else:
                 lines.append("Корзинка пуста. Новая порция снега — в полночь по Москве.")
+        rows.append(["wb:journal"])
     elif key in ("duels", "invite", "cancel", "move", "accept"):
         banner = "snowduel"
         if idx is None:
@@ -332,7 +355,7 @@ async def show(inter, key, stamp="", *, send=None):
                 [discord.ui.Select(custom_id="sd:wb:choose", placeholder="Выбрать награду", options=opts)]
             )
             lines.append("**Фон карточки профиля** «Северная ночь» · 80 ❄")
-            rows.append(["wb:buy", "wb:dress"] if idx is not None else ["wb:dress"])
+            rows.append((["wb:buy"] if idx is not None else []) + ["wb:dress", "wb:workshop"])
     if key == "invite" and match and notice.startswith("<@"):
         _, a, b, _, turn, *_ = match
         try:

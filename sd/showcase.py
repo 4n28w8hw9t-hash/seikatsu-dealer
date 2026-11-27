@@ -25,6 +25,7 @@ def badge(key):
         if ident.startswith('santa_') and ident[6:] in SANTA:
             label,icon,_=SANTA[ident[6:]]
             return label,icon,'🎁'
+        if ident == "moon_brooch": return "Брошь «Первая зимняя луна»", "wb_moon_brooch", "🌙"
         if ident == "snowball": return "Первый снежок", "wb_snowball", "❄️"
         if ident == "princess": return "Дар Принцессы", "wb_santa", "🎁"
         if ident == "rings":
@@ -66,7 +67,7 @@ async def earned(guild_id, uid, *, db=None):
         keys.append("winter:rings")
     from .snowballs import inventory
     items=await inventory(db,guild_id,uid)
-    keys.extend("winter:"+k for k in ("snowball","princess","santa_rose","santa_chime","santa_book") if k in items)
+    keys.extend("winter:"+k for k in ("moon_brooch","snowball","princess","santa_rose","santa_chime","santa_book") if k in items)
     return keys
 
 
