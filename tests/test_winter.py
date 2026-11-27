@@ -74,7 +74,11 @@ class WinterBallTests(IsolatedAsyncioTestCase):
                 await self.db.execute("INSERT INTO users(guild_id,user_id,balance) VALUES(?,?,800)", (g, u))
                 await self.db.execute("UPDATE winter26_players SET flakes=50 WHERE g=? AND u=?", (g, u))
                 await self.db.commit()
-                await asyncio.gather(self.act(u, "offer", w.START, g), self.act(u, "offer", w.START, g))
+                # A deposit recorded by the release preceding free keepsake exchange.
+                await self.db.execute("UPDATE users SET balance=balance-500 WHERE guild_id=? AND user_id=?",(g,u))
+                await self.db.execute("UPDATE winter26_players SET flakes=0 WHERE g=? AND u=?",(g,u))
+                await self.db.execute("INSERT INTO winter26_gifts(g,u) VALUES(?,?)",(g,u))
+                await self.db.commit()
         with patch.object(w, "today", return_value=w.REVEAL):
             await asyncio.gather(w.deliver_gifts(), w.deliver_gifts())
         matches = await w.rows(self.db, "SELECT g,u,recipient FROM winter26_gifts", ())
@@ -226,3 +230,25 @@ class WinterBallTests(IsolatedAsyncioTestCase):
             result = await snow.duel(db, 1, 22, latest=True)
             self.assertEqual((result[3], result[7], result[8]), ("done", 3, 0))
             self.assertIsNone(await snow.duel(db, 1, 11))
+
+    async def test_free_secret_santa_and_sealed_invitation(self):
+        from unittest.mock import AsyncMock
+        inter=SimpleNamespace(guild_id=1,user=SimpleNamespace(id=12))
+        with patch.object(w,"today",return_value=w.START-timedelta(days=1)), patch.object(winter,"reply",new_callable=AsyncMock) as send:
+            for key in ("ball","store","pack","wrap_book","aim0@old","unwrap"):
+                await winter.show(inter,key)
+                self.assertEqual(send.await_args.kwargs["rows"],[["menu"]])
+            self.assertEqual(await w.first(self.db,"SELECT count(*) FROM winter26_players",()),0)
+        await self.act(1,"wrap_book",w.START)
+        await self.act(1,"wrap_rose",w.START)
+        await self.act(2,"wrap_chime",w.START)
+        await self.act(3,"wrap_book",w.START,2)
+        with patch.object(w,"today",return_value=w.REVEAL):
+            await asyncio.gather(w.deliver_gifts(),w.deliver_gifts())
+        self.assertEqual(await w.rows(self.db,"SELECT u,item FROM snow_items WHERE g=1 ORDER BY u",()),[(1,"santa_chime"),(2,"santa_rose")])
+        solo=await w.first(self.db,"SELECT item FROM snow_items WHERE g=2",())
+        self.assertIn(solo,("santa_chime","santa_rose"))
+        self.assertEqual(await w.first(self.db,"SELECT count(*) FROM coin_history",()),0)
+        self.assertEqual(await w.first(self.db,"SELECT SUM(flakes) FROM winter26_players",()),0)
+        await self.act(2,"wrap_rose",w.REVEAL)
+        self.assertEqual(await w.first(self.db,"SELECT keepsake FROM winter26_parcels WHERE g=1 AND u=2",()),"chime")

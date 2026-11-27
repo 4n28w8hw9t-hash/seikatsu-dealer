@@ -14,6 +14,8 @@ from . import winter_state as w
 from .core import _B, BUTTONS, bot, btn, button_emoji, reply
 from .winter_snow import snowfall
 
+KIND_LABELS = {"frame":"Рамка аватара","skin":"Фон карточки профиля","pair":"Комплект колец для пары"}
+
 NAMES = {
     "siege": ("На осаду", "shield"),
     "pack": ("Слепить снежки", "basket"),
@@ -279,7 +281,7 @@ async def show(inter, key, stamp="", *, send=None):
             name, price, kind = s.SHOP[item]
             if item == "rings" and step == 4:
                 price = 120
-            lines.append(f"**{name}** · {price} ❄")
+            lines.append(f"**{KIND_LABELS[kind]} «{name}»** · {price} ❄")
             lines.append(
                 {
                     "frame": "Рамка для твоего аватара.",
@@ -309,17 +311,18 @@ async def show(inter, key, stamp="", *, send=None):
                     discord.SelectOption(
                         label=name,
                         value=code,
-                        description=f"{price} снежинок · примерка и покупка",
+                        description=f"{KIND_LABELS[kind]} · {price} снежинок",
                         emoji=button_emoji("wb_" + code, "❄️"),
                     )
                 )
                 lines.append(
-                    f"{name} · **{price} ❄**"
+                    f"**{KIND_LABELS[kind]}** «{name}» · {price} ❄"
                     + (" · получено" if code in owned or code == "rings" and rings else "")
                 )
             rows.append(
                 [discord.ui.Select(custom_id="sd:wb:choose", placeholder="Выбрать награду", options=opts)]
             )
+            lines.append("**Фон карточки профиля** «Северная ночь» · 80 ❄")
             rows.append(["wb:buy", "wb:dress"] if idx is not None else ["wb:dress"])
     if key == "invite" and match and notice.startswith("<@"):
         _, a, b, _, turn, *_ = match
