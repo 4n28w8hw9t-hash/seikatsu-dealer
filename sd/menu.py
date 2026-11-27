@@ -217,6 +217,8 @@ async def menu_action(key: str, inter: discord.Interaction, n: int = 0, side: st
         await onboarding.show(inter)
     elif key == "event":
         await events.show(inter)
+    elif key == "event:help":
+        await events.show(inter, show_help=True)
     elif key == "event:claim":
         await events.claim(inter)
     elif key == "season:archive" or key.startswith("season:archive:"):
