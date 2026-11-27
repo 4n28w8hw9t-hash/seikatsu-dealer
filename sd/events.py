@@ -4,7 +4,7 @@ from datetime import datetime
 import discord
 from discord import app_commands
 
-from .core import bot, button_icon, embed, reply
+from .core import bot, button_icon, embed, send_card
 from .quests import COURT_TZ
 
 GOAL = 40
@@ -58,7 +58,7 @@ async def show(inter, notice=""):
     if notice:
         lines.extend(("", notice))
     title = f"{button_icon('court_event') or '🏆'} Событие двора"
-    await reply(inter, embed=embed(title, "\n".join(lines)), rows=rows, key=None)
+    await send_card(inter, embed(title, "\n".join(lines)), "court_event", rows=rows)
 
 
 async def claim(inter):
