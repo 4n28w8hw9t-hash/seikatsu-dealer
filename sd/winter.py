@@ -37,6 +37,8 @@ ACTIONS = {
     "bare": ("Снять рамку", "◯", "frame"),
     "archive": ("Летопись", "📜", "ball"),
 }
+for keepsake,(label,icon,_) in w.SANTA.items():
+    BUTTONS["wb:wrap_"+keepsake]=(label,"🎁",icon,_B)
 for action, (label, emoji, icon) in ACTIONS.items():
     BUTTONS["wb:" + action] = (
         label,
@@ -76,6 +78,7 @@ PAGES = {
     "strike": "raid",
     "counter": "raid",
     "offer": "santa",
+    **{"wrap_"+key:"santa" for key in w.SANTA},
     "buy": "shop",
     "pairday": "pair",
     "claim": "gifts",
@@ -98,6 +101,14 @@ async def show(inter, key="ball"):
     g, u = inter.guild_id, inter.user.id
     if g is None:
         return await reply(inter, "Бал проходит на сервере.", nav=False, key=None)
+    if day < w.START:
+        invitation=discord.Embed(description=(
+            "**Глашатай разворачивает грамоту с печатью Принцессы.**\n"
+            "«Знатных господ и добрых гостей зовём на Бал зимней луны. В полночь караул отворит врата: "
+            "на площади начнётся снежная осада, а в зале зажгут огни и развернут ярмарку даров».\n\n"
+            "**Открытие — 15 декабря в 00:00 по Москве.**"),color=0xC8AB71)
+        return await reply(inter,embed=invitation,image=("invitation.jpg",str(ART/"invitation.jpg")),
+                           rows=[["menu"]],nav=False,key=None)
     key, _, stamp = key.partition("@")
     if key in ("raid","strike","counter") and idx is not None:
         key = "siege"
@@ -117,6 +128,8 @@ async def show(inter, key="ball"):
             )
         )[0]
         gift = await w.rows(db, "SELECT recipient FROM winter26_gifts WHERE g=? AND u=?", (g, u))
+        wrapped = await w.first(db,"SELECT keepsake FROM winter26_parcels WHERE g=? AND u=?",(g,u),"")
+        received = await w.first(db,"SELECT item FROM snow_items WHERE g=? AND u=? AND item IN ('santa_rose','santa_chime','santa_book')",(g,u),"")
         mar = await w.rows(db, "SELECT a,b,since FROM marriages WHERE guild_id=? AND (a=? OR b=?)", (g, u, u))
         pairdays = await w.pair_days(db, g, *mar[0]) if mar else 0
         played = await w.first(
@@ -177,21 +190,21 @@ async def show(inter, key="ball"):
             if idx is not None:
                 actions[0].insert(0, "raid")
     elif page == "santa":
-        lines = [
-            "До 1 января оставь под ёлкой **500 монет и 50 снежинок**. Каждый даритель получит такой же подарок от случайного другого участника. Если участник один, всё вернётся на его счёт.",
-            f"Твои снежинки · **{flakes}**",
-        ]
-        if gift:
-            receiver = gift[0][0]
-            lines.append(
-                "🎁 Подарок под ёлкой."
-                if receiver is None
-                else "🎁 Твой взнос вернулся на счёт."
-                if receiver == u
-                else "🎁 Обмен завершён. Монеты и снежинки зачислены."
-            )
-        if idx is not None and day < w.REVEAL and not gift:
-            actions = [["offer"]]
+        if day < w.REVEAL:
+            lines = ["Выбери, что подарить незнакомцу при дворе. Камеристка вложит в посылку пожелание и скроет имя дарителя.",
+                     "1 января каждый даритель получит выбранный для него коллекционный значок. Его можно выставить в профиле. Участие бесплатное."]
+            for item,(name,_,wish) in w.SANTA.items():
+                lines.append(f"**{name}** — «{wish}»")
+            if gift:
+                lines.append(f"Под ёлкой лежит **{w.SANTA.get(wrapped,w.SANTA['book'])[0]}**. До полуночи 1 января выбор можно изменить.")
+            actions=[["wb:wrap_"+item for item in w.SANTA]]
+        elif received:
+            name,_,wish=w.SANTA[received.removeprefix("santa_")]
+            lines=["**Тебе пришла посылка от "+("Принцессы" if gift and gift[0][0]==u else "Тайного Санты")+"!**",
+                   f"Внутри — **{name}**. В записке написано: «{wish}»", "Значок уже в коллекции. Выбери его на витрине профиля."]
+            actions=[["showcase"]]
+        else:
+            lines=["Камеристка вручила новогодние посылки. Запись на обмен закончилась 1 января."]
     elif page == "game":
         if idx is None:
             lines = ["Дух Метели принимает гостей с 15 декабря по 10 января."]

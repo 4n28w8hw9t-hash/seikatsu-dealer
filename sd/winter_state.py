@@ -46,7 +46,13 @@ CREATE TABLE IF NOT EXISTS winter26_gifts (g INTEGER,u INTEGER,recipient INTEGER
 """
 
 
+SANTA = {
+    "rose": ("Роза под снегом", "rose", "Пусть даже в стужу рядом будет тот, кто согреет."),
+    "chime": ("Бубенец бала", "quest_reminder", "Пусть новый год принесёт вести, от которых хочется танцевать."),
+    "book": ("Книга пожеланий", "quest_book", "Пусть самая смелая мечта найдёт место в твоей летописи."),
+}
 SCHEMA += """
+CREATE TABLE IF NOT EXISTS winter26_parcels (g INTEGER,u INTEGER,keepsake TEXT NOT NULL,prepaid INTEGER NOT NULL,PRIMARY KEY(g,u));
 CREATE TABLE IF NOT EXISTS snow_baskets(g INTEGER,u INTEGER,day TEXT,used INTEGER DEFAULT 0,last_target INTEGER DEFAULT -1,PRIMARY KEY(g,u,day));
 CREATE TABLE IF NOT EXISTS snow_forts(g INTEGER,boss INTEGER,hits INTEGER DEFAULT 0,shooter INTEGER DEFAULT 0,mirrors INTEGER DEFAULT 0,volley INTEGER DEFAULT 0,PRIMARY KEY(g,boss));
 CREATE TABLE IF NOT EXISTS snow_items(g INTEGER,u INTEGER,item TEXT,PRIMARY KEY(g,u,item));
@@ -139,8 +145,15 @@ async def settle(db, g, day):
     for i, sender in enumerate(entrants):
         receiver = entrants[(i + 1) % len(entrants)]
         await db.execute("UPDATE winter26_gifts SET recipient=? WHERE g=? AND u=?", (receiver, g, sender))
-        await coin(db, g, receiver, 500, "Тайный Санта" if sender != receiver else "Возврат подарка")
-        await db.execute("UPDATE winter26_players SET flakes=flakes+50 WHERE g=? AND u=?", (g, receiver))
+        parcel = await rows(db, "SELECT keepsake,prepaid FROM winter26_parcels WHERE g=? AND u=?", (g,sender))
+        keepsake,prepaid = parcel[0] if parcel else ("book",1)
+        if prepaid:
+            await coin(db,g,sender,500,"Возврат прежнего взноса Тайного Санты")
+            await db.execute("UPDATE winter26_players SET flakes=flakes+50 WHERE g=? AND u=?", (g,sender))
+        # При единственном госте подарок выбирает Принцесса.
+        if sender == receiver:
+            keepsake = SystemRandom().choice([key for key in SANTA if key!=keepsake])
+        await db.execute("INSERT OR IGNORE INTO snow_items VALUES(?,?,?)",(g,receiver,"santa_"+keepsake))
 
 
 async def deliver_gifts():
@@ -187,24 +200,15 @@ async def act(db, g, u, key, day):
         reward = 20 if correct else 5
         await db.execute("UPDATE winter26_players SET flakes=flakes+? WHERE g=? AND u=?", (reward, g, u))
         return ("Верно!" if correct else "Дух Метели дарит утешительный приз.") + f" +{reward} снежинок."
-    if key == "offer":
-        if day >= REVEAL:
-            return "Подарки уже открыты."
-        if await first(db, "SELECT 1 FROM winter26_gifts WHERE g=? AND u=?", (g, u)):
-            return "Твой подарок уже под ёлкой."
-        await bot.ensure_user(db, g, u)
-        enough = await first(
-            db,
-            "SELECT 1 FROM users JOIN winter26_players ON guild_id=g AND user_id=u "
-            "WHERE g=? AND u=? AND balance>=500 AND flakes>=50",
-            (g, u),
-        )
-        if not enough:
-            return "Для подарка нужно 500 монет и 50 снежинок."
-        await coin(db, g, u, -500, "Подарок под ёлку")
-        await db.execute("UPDATE winter26_players SET flakes=flakes-50 WHERE g=? AND u=?", (g, u))
-        await db.execute("INSERT INTO winter26_gifts(g,u) VALUES(?,?)", (g, u))
-        return "Камеристка спрятала твой подарок под ёлкой."
+    if key.startswith("wrap_") and key[5:] in SANTA:
+        if not START <= day < REVEAL:
+            return "Камеристка принимает посылки с 15 по 31 декабря."
+        item=key[5:]
+        existing=await first(db,"SELECT 1 FROM winter26_gifts WHERE g=? AND u=?",(g,u))
+        await db.execute("INSERT OR IGNORE INTO winter26_gifts(g,u) VALUES(?,?)",(g,u))
+        await db.execute("INSERT INTO winter26_parcels VALUES(?,?,?,?) ON CONFLICT(g,u) DO UPDATE SET keepsake=excluded.keepsake",
+                         (g,u,item,existing))
+        return f"Камеристка запечатала подарок «{SANTA[item][0]}»."
     if key == "pairday":
         mar = await rows(db, "SELECT a,b,since FROM marriages WHERE guild_id=? AND (a=? OR b=?)", (g, u, u))
         if not mar:

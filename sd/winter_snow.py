@@ -35,7 +35,7 @@ def snowfall(image):
             fx = int(x - phase * travel * 0.31 + 2 * sin(phase * 2 * pi))
             if not (13 < fx < base.width - 13 and 13 < fy < 305):
                 continue
-            if (315 < fx < 966 and 75 < fy < 235) or (82 < fx < 210 and 40 < fy < 148):
+            if (315 < fx < 966 and 75 < fy < 235) or fx < 317:
                 continue
             strength = (1 - cos(phase * 2 * pi)) * 0.5
             if strength < 0.16:
