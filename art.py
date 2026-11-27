@@ -332,6 +332,11 @@ def _char_for(banner_path):
         return portrait.convert("RGBA")
 
 
+WIDE_RANK_PORTRAITS = {
+    "faith_5_f", "faith_6", "faith_6_f", "faith_7", "faith_7_f", "faith_9", "noble_6",
+}
+
+
 def _portrait(img, banner_path, zone, *, skin=""):
     """Персонаж в своей левой зоне карточки (не заходит на текст). Возвращает x начала текста."""
     W, H = img.size
@@ -341,11 +346,19 @@ def _portrait(img, banner_path, zone, *, skin=""):
     layer = Image.new("RGBA", (zone, H))
     if char is not None:
         scale = H * 1.5 / char.height
-        stem = os.path.basename(banner_path)
+        stem = os.path.splitext(os.path.basename(banner_path))[0]
         if stem.startswith(("noble_", "faith_")):
             scale = min(1, (bottom - top) / char.height)
+        keep_full_width = stem in WIDE_RANK_PORTRAITS
+        if keep_full_width:
+            # These poses hold their props away from the body.
+            scale = min(scale, (zone - 2 * inset) / char.width)
         portrait = char.resize((round(char.width * scale), round(char.height * scale)), Image.LANCZOS)
-        layer.paste(portrait, ((zone - portrait.width) // 2, top))
+        x = (zone - portrait.width) // 2
+        if keep_full_width:
+            top += (bottom - top - portrait.height) // 2
+            bottom = top + portrait.height
+        layer.paste(portrait, (x, top))
     elif not skin and banner_path and os.path.exists(banner_path):   # запасной вариант: кусок баннера
         with Image.open(banner_path) as banner:
             part = banner.crop((14, 14, 14 + round(zone * (banner.height - 28) / H), banner.height - 14))
