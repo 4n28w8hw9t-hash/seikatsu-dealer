@@ -5,7 +5,7 @@
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 RED = (209, 53, 57)
 DARK_RED = (150, 28, 34)
@@ -336,23 +336,33 @@ def _portrait(img, banner_path, zone, *, skin=""):
     """Персонаж в своей левой зоне карточки (не заходит на текст). Возвращает x начала текста."""
     W, H = img.size
     char = _char_for(banner_path)
+    inset, top = 12, 24
+    bottom = H - inset
+    layer = Image.new("RGBA", (zone, H))
     if char is not None:
         scale = H * 1.5 / char.height
         stem = os.path.basename(banner_path)
         if stem.startswith(("noble_", "faith_")):
-            scale = min(1, H * 1.28 / char.height)
-        c = char.resize((round(char.width * scale), round(char.height * scale)), Image.LANCZOS)
-        x = (zone - c.width) // 2
-        layer = Image.new("RGBA", (zone, H), (0, 0, 0, 0))
-        layer.paste(c, (x, 24))
-        img.paste(layer, (0, 0), layer)
+            scale = min(1, (bottom - top) / char.height)
+        portrait = char.resize((round(char.width * scale), round(char.height * scale)), Image.LANCZOS)
+        layer.paste(portrait, ((zone - portrait.width) // 2, top))
     elif not skin and banner_path and os.path.exists(banner_path):   # запасной вариант: кусок баннера
-        b = Image.open(banner_path).convert("RGB")
-        part = b.crop((14, 14, 14 + round(zone * (b.height - 28) / H), b.height - 14))
-        part = part.resize((zone, H), Image.LANCZOS)
-        img.paste(part, (0, 0))
+        with Image.open(banner_path) as banner:
+            part = banner.crop((14, 14, 14 + round(zone * (banner.height - 28) / H), banner.height - 14))
+            layer.paste(part.resize((zone, H), Image.LANCZOS), (0, 0))
     else:
         return 40
+
+    mask = Image.new("L", layer.size)
+    paint = ImageDraw.Draw(mask)
+    fade = round(H * 0.08)
+    paint.rectangle((inset, inset, zone - 1, bottom - fade), fill=255)
+    for y in range(bottom - fade + 1, bottom):
+        opacity = round(255 * (bottom - y) / fade)
+        paint.line((inset, y, zone - 1, y), fill=opacity)
+    alpha = ImageChops.multiply(layer.getchannel("A"), mask)
+    img.paste(layer, (0, 0), alpha)
+
     d = ImageDraw.Draw(img)
     d.rectangle([zone, 0, W, H], fill={"hall": (12,22,44), "yard": (19,32,51), "night": (8,31,38)}.get(skin,(16,5,8)))       # спокойный фон под текстом
     d.line([(zone, 18), (zone, H - 18)], fill=P_GOLD_D, width=2)
