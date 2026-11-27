@@ -338,10 +338,13 @@ def _portrait(img, banner_path, zone, *, skin=""):
     char = _char_for(banner_path)
     if char is not None:
         scale = H * 1.5 / char.height
+        stem = os.path.basename(banner_path)
+        if stem.startswith(("noble_", "faith_")):
+            scale = min(1, H * 1.28 / char.height)
         c = char.resize((round(char.width * scale), round(char.height * scale)), Image.LANCZOS)
         x = (zone - c.width) // 2
         layer = Image.new("RGBA", (zone, H), (0, 0, 0, 0))
-        layer.paste(c, (x, 24), c)
+        layer.paste(c, (x, 24))
         img.paste(layer, (0, 0), layer)
     elif not skin and banner_path and os.path.exists(banner_path):   # запасной вариант: кусок баннера
         b = Image.open(banner_path).convert("RGB")
