@@ -734,21 +734,28 @@ _THUMBS = {}
 
 def thumb(char_path: str, size: int = 256) -> bytes | None:
     """Квадратный портрет персонажа для коротких ответов (кешируется)."""
-    if char_path in _THUMBS:
-        return _THUMBS[char_path]
     if not char_path or not os.path.exists(char_path):
         return None
-    ch = Image.open(char_path).convert("RGBA")
-    # верхняя часть фигуры: голова и плечи
-    side = min(ch.width, round(ch.height * 0.62))
-    x0 = max(0, (ch.width - side) // 2)
-    face = ch.crop((x0, 0, x0 + side, side)).resize((size, size), Image.LANCZOS)
+    cache_key = (char_path, size)
+    if cache_key in _THUMBS:
+        return _THUMBS[cache_key]
+    with Image.open(char_path) as portrait:
+        ch = portrait.convert("RGBA")
+    is_pair = os.path.splitext(os.path.basename(char_path))[0] == "marry"
+    fraction = 0.78 if is_pair else 0.65
+    side = min(ch.width, round(ch.height * fraction))
+    x0 = (ch.width - side) // 2
+    top = max(1, round(size * 0.055))
+    height = size - top
+    width = round(size * 0.94) if is_pair else size
+    # Use a square crop throughout so faces keep their proportions.
+    face = ch.crop((x0, 0, x0 + side, side)).resize((width, width), Image.LANCZOS)
     bg = _pbg(size, size, cx=0.5).convert("RGBA")
-    bg.alpha_composite(face)
+    bg.alpha_composite(face.crop((0, 0, width, height)), ((size - width) // 2, top))
     d = ImageDraw.Draw(bg)
     d.rectangle([3, 3, size - 4, size - 4], outline=P_GOLD_D, width=3)
     out = _io.BytesIO()
     bg.convert("RGB").save(out, "PNG")
-    _THUMBS[char_path] = out.getvalue()
-    return _THUMBS[char_path]
+    _THUMBS[cache_key] = out.getvalue()
+    return _THUMBS[cache_key]
 
